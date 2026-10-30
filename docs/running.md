@@ -17,10 +17,10 @@ account, and `jq`. The instances clone the repository from `repo_url` at
 lock file first.
 
 `make lock` resolves the lock file for Linux x86_64 and Python 3.12 from any
-host. Before you tag the commit that `repo_commit` names, run `make lockcheck`
-on Linux x86_64. It installs the lock into a new venv in a temporary directory
-and imports every module of every stage. Without a Linux machine, run it in a
-`python:3.12` container with the repository mounted.
+host. Before you start, run `make lockcheck` on Linux x86_64. It installs the
+lock into a new venv in a temporary directory and imports every module of every
+stage. Without a Linux machine, run it in a `python:3.12` container with the
+repository mounted.
 
 ## Create the machines
 
@@ -31,43 +31,45 @@ cd terraform
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Edit `terraform.tfvars`. Set `operator_cidr` to the address you connect from, and
-`repo_url` and `repo_commit` to the pushed commit. The other variables and their defaults
-are in `variables.tf`. Set `bucket_force_destroy = true` if `terraform destroy` should
-delete the bucket with its objects.
+Edit `terraform.tfvars`. Set `operator_cidr` to the address you connect from,
+and `repo_url` and `repo_commit` to the pushed commit. The other variables and
+their defaults are in `variables.tf`. Set `bucket_force_destroy = true` if
+`terraform destroy` should delete the bucket with its objects.
 
-The default `load_generator_count` is 20. At 1000 users, 10 generators run 100 users
-each. A generator whose receive rate passes half its link may limit the run. The
-orchestrator then repeats the run with half the users per generator, which is 20
-generators of 50 users, so the repeat also runs at 1000 users. A repeat that still
-passes half the link stays in the results, and `resampling-runs.csv` marks it in the
-`link_limited` column.
+The default `load_generator_count` is 20. At 1000 users, 10 generators run 100
+users each. A generator whose receive rate passes half its link may limit the
+run. The orchestrator then repeats the run with half the users per generator,
+which is 20 generators of 50 users, so the repeat also runs at 1000 users. A
+repeat that still passes half the link stays in the results, and
+`resampling-runs.csv` marks it in the `link_limited` column.
 
-Generation and the format benchmark take days and use no load generator. Create the other
-machines first, and the 20 load generators before the resampling benchmark:
+Generation and the format benchmark take days and use no load generator. Create
+the other machines first, and the 20 load generators before the resampling
+benchmark:
 
 ```bash
 terraform init
 terraform apply -var load_generator_count=0
 ```
 
-The apply creates the file server, the benchmark client, the resampling server, and the
-bucket. Each instance installs its packages and the repository after it boots, and
-writes `/etc/tszbench/ready` when that setup ends. The client has 32 vCPU. A gateway
-endpoint keeps S3 traffic inside the VPC, off the internet gateway.
+The apply creates the file server, the benchmark client, the resampling server,
+and the bucket. Each instance installs its packages and the repository after it
+boots, and writes `/etc/tszbench/ready` when that setup ends. The client has 32
+vCPU. A gateway endpoint keeps S3 traffic inside the VPC, off the internet
+gateway.
 
-The file server, the client, and the resampling server ignore later changes to the image
-and the user data, so the second apply never replaces them or their data volumes. To
-rebuild one of them on purpose, run `terraform apply -replace=aws_instance.client` with
-its resource name. Pin the image so that the load generators of the second apply run
-the same image as the other machines:
+The file server, the client, and the resampling server ignore later changes to
+the image and the user data, so the second apply never replaces them or their
+data volumes. To rebuild one of them on purpose, run `terraform apply
+-replace=aws_instance.client` with its resource name. Pin the image so that the
+load generators of the second apply run the same image as the other machines:
 
 ```bash
 echo "ami_id = \"$(terraform output -raw ami_id)\"" >> terraform.tfvars
 ```
 
-Keep `repo_commit` unchanged until the resampling benchmark ends. The load generators
-clone that commit when the second apply creates them.
+Keep `repo_commit` unchanged until the resampling benchmark ends. The load
+generators clone that commit when the second apply creates them.
 
 ## Read the outputs and the hosts file
 
@@ -80,9 +82,9 @@ terraform output -raw hosts_file > hosts.txt
 CLIENT=$(terraform output -json public_ips | jq -r .client)
 ```
 
-`hosts.txt` holds one `role private_ip` line per instance. The roles are `file_server`,
-`client`, `resampling_server`, and `load_generator`. The client reaches every other host
-over SSH, so copy the key and the hosts file to it:
+`hosts.txt` holds one `role private_ip` line per instance. The roles are
+`file_server`, `client`, `resampling_server`, and `load_generator`. The client
+reaches every other host over SSH, so copy the key and the hosts file to it:
 
 ```bash
 scp -i ~/.ssh/tszbench ~/.ssh/tszbench ubuntu@$CLIENT:.ssh/id_ed25519
@@ -90,8 +92,8 @@ scp -i ~/.ssh/tszbench hosts.txt ubuntu@$CLIENT:hosts.txt
 ssh -i ~/.ssh/tszbench ubuntu@$CLIENT
 ```
 
-Every step from here runs on the client unless it says otherwise. Set these variables in
-each new shell:
+Every step from here runs on the client unless it says otherwise. Set these
+variables in each new shell:
 
 ```bash
 cd ~/timeseries-zarr-benchmark
@@ -153,8 +155,8 @@ ssh $FILE_SERVER "cd timeseries-zarr-benchmark && .venv/bin/python -m upload pul
 .venv/bin/python -m upload storage --root /data --recordings R1,R2,R3,R4
 ```
 
-This writes `results/storage.csv`, which Table 2 reads. Measuring a recording again
-replaces its rows and keeps the rows of the others.
+This writes `results/storage.csv`, which Table 2 reads. Measuring a recording
+again replaces its rows and keeps the rows of the others.
 
 ## Run the format benchmark
 
@@ -318,4 +320,4 @@ terraform destroy
 
 The bucket is deleted only when it is empty or `bucket_force_destroy` is true.
 To empty it first, run `aws s3 rm s3://<bucket> --recursive` with the name that
-`terraform output -raw bucket_name` prints.
+`terraform output -raw bucket_name` returns.
