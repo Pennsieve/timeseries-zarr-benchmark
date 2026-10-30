@@ -1,0 +1,11 @@
+{
+  "date": "2026-10-27",
+  "region": "us-east-1",
+  "currency": "USD",
+  "check_on_run_date": "On-demand list prices from the AWS Price List Query API (GetProducts): AmazonEC2 for the c6i.8xlarge (Linux, shared tenancy), AmazonS3 Requests-Tier2 for GET requests, and AWSDataTransfer DataTransfer-Out-Bytes to the internet, first 10 TB per month after the 100 GB monthly free allowance, which applies to S3 and EC2 alike. Check every price against the AWS price list again on the date of the benchmark run, then set date.",
+  "server_instance": "c6i.8xlarge",
+  "server_instance_usd_per_hour": 1.36,
+  "s3_get_usd_per_1000_requests": 0.0004,
+  "data_out_usd_per_gb": 0.09,
+  "gets_per_request": null
+}

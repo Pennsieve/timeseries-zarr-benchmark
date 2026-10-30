@@ -1,0 +1,15 @@
+
+# Installs nginx and serves /data over HTTP/1.1 without TLS.
+apt-get install -y nginx
+rm -f /etc/nginx/sites-enabled/default
+cat > /etc/nginx/nginx.conf <<'NGINX_CONF'
+${nginx_conf}
+NGINX_CONF
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+
+# The benchmark reads this file over HTTP and from the local disk.
+nginx -V > /data/nginx-version.txt 2>&1
+chown ${login_user}:${login_user} /data/nginx-version.txt
+cp /data/nginx-version.txt /etc/tszbench/nginx-version.txt

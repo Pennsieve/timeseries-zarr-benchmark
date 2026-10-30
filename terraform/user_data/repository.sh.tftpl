@@ -1,0 +1,15 @@
+
+# Clones the benchmark repository and installs it into .venv.
+sudo -u ${login_user} -H bash -euxo pipefail <<'AS_LOGIN_USER'
+cd "$HOME"
+git clone ${repo_url} timeseries-zarr-benchmark
+cd timeseries-zarr-benchmark
+git checkout ${repo_commit}
+python3.12 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -r envs/requirements.lock
+.venv/bin/pip install --no-deps -e .
+git rev-parse HEAD > "$HOME/benchmark-commit.txt"
+AS_LOGIN_USER
+
+touch /etc/tszbench/ready

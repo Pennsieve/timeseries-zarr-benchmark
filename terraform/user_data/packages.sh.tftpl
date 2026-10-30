@@ -1,0 +1,35 @@
+#!/bin/bash
+# Installs the system packages, the AWS CLI, and the drop-caches helper.
+set -euxo pipefail
+exec > >(tee -a /var/log/tszbench-bootstrap.log) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y python3.12 python3.12-venv python3-pip git curl unzip \
+  xfsprogs sysstat
+
+curl -fsSL -o /tmp/awscliv2.zip \
+  https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+unzip -q /tmp/awscliv2.zip -d /tmp
+/tmp/aws/install --update
+rm -rf /tmp/aws /tmp/awscliv2.zip
+
+mkdir -p /etc/tszbench
+echo "${role}" > /etc/tszbench/role
+echo "${bucket}" > /etc/tszbench/bucket
+echo "${region}" > /etc/tszbench/region
+# SSH sessions read /etc/environment, so every stage that a command over SSH
+# starts signs its S3 requests for the bucket region.
+echo "AWS_DEFAULT_REGION=${region}" >> /etc/environment
+echo "AWS_REGION=${region}" >> /etc/environment
+
+cat > /usr/local/sbin/drop-caches <<'SCRIPT'
+#!/bin/sh
+sync
+echo 3 > /proc/sys/vm/drop_caches
+SCRIPT
+chmod 0755 /usr/local/sbin/drop-caches
+echo "${login_user} ALL=(root) NOPASSWD: /usr/local/sbin/drop-caches" \
+  > /etc/sudoers.d/drop-caches
+chmod 0440 /etc/sudoers.d/drop-caches
+visudo -cf /etc/sudoers.d/drop-caches

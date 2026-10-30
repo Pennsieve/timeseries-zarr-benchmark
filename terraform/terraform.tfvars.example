@@ -1,0 +1,7 @@
+operator_cidr = "203.0.113.7/32"
+repo_url      = "https://github.com/Pennsieve/timeseries-zarr-benchmark.git"
+repo_commit   = "main"
+
+# The defaults create 20 load generators. Set 0 to apply the other machines first,
+# then apply again without this line before the resampling benchmark.
+# load_generator_count = 0

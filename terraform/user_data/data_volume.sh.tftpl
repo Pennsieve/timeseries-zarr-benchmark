@@ -1,0 +1,21 @@
+
+# Formats the data volume and mounts it at /data.
+# The data volume is the one disk that does not hold the root file system.
+root_disk=$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")
+data_disk=""
+for _ in $(seq 1 60); do
+  data_disk=$(lsblk -dpno NAME,TYPE | awk '$2 == "disk" {print $1}' \
+    | grep -v "/dev/$root_disk" | head -n 1 || true)
+  [ -n "$data_disk" ] && break
+  sleep 2
+done
+[ -n "$data_disk" ] || { echo "no data volume found" >&2; exit 1; }
+
+if ! blkid "$data_disk" > /dev/null 2>&1; then
+  mkfs.xfs "$data_disk"
+fi
+mkdir -p /data
+uuid=$(blkid -s UUID -o value "$data_disk")
+echo "UUID=$uuid /data xfs defaults,noatime,nofail 0 2" >> /etc/fstab
+mount /data
+chown ${login_user}:${login_user} /data
