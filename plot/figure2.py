@@ -90,7 +90,7 @@ def _draw_formats(axis: Any, panel: Any, column: str) -> None:
 def figure2(
     format_benchmark: Any,
     out_dir: Path,
-    recording: str = "R3",
+    recording: str = "R3-1h",
     stem: str = "fig2",
 ) -> Output:
     """Write Figure 2 for one recording as `<stem>.pdf` and `<stem>.png`.

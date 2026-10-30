@@ -7,8 +7,8 @@ import numpy as np
 from tszbench import schemas
 from tszbench.recordings import RecordingSpec
 
-WINDOWS_S = (1, 10, 60, 600, 3600)
-"""Window lengths in seconds: 1 s, 10 s, 1 min, 10 min, and 1 h."""
+WINDOWS_S = (1, 10, 60, 600)
+"""Window lengths in seconds: 1 s, 10 s, 1 min, and 10 min."""
 
 SHORT_REPEATS = 100
 """Reads per combination for windows up to `SHORT_WINDOW_MAX_S`."""
@@ -17,20 +17,14 @@ SHORT_WINDOW_MAX_S = 60
 """Longest window that gets `SHORT_REPEATS` reads."""
 
 MEDIUM_REPEATS = 20
-"""Reads per combination at a window of `MEDIUM_WINDOW_S`."""
+"""Reads per combination at a window longer than `SHORT_WINDOW_MAX_S`."""
 
-MEDIUM_WINDOW_S = 600
-"""Window length that gets `MEDIUM_REPEATS` reads."""
-
-LONG_REPEATS = 10
-"""Reads per combination at a window longer than `MEDIUM_WINDOW_S`."""
-
-READ_BUDGET_S = 3600
+READ_BUDGET_S = 60
 """Default read budget of a combination, in seconds. A combination stops after
 the read that brings the sum of its timed read seconds to at least this value,
 once it has made `MIN_READS` reads."""
 
-MIN_READS = 3
+MIN_READS = 1
 """Default number of timed reads a combination makes before the read budget can
 stop it. A combination with fewer planned reads makes all of them."""
 
@@ -85,9 +79,7 @@ def repeats(window_s: int) -> int:
     window_index(window_s)
     if window_s <= SHORT_WINDOW_MAX_S:
         return SHORT_REPEATS
-    if window_s <= MEDIUM_WINDOW_S:
-        return MEDIUM_REPEATS
-    return LONG_REPEATS
+    return MEDIUM_REPEATS
 
 
 def positions(

@@ -1,6 +1,14 @@
 import pytest
+from timeseries_zarr.planning import level_count
 
-from tszbench.recordings import RECORDINGS, resolve, sample_range
+from tszbench.recordings import (
+    FORMAT_RECORDINGS,
+    GAPS,
+    R4_GAPS,
+    RECORDINGS,
+    resolve,
+    sample_range,
+)
 
 
 @pytest.mark.parametrize(
@@ -9,7 +17,7 @@ from tszbench.recordings import RECORDINGS, resolve, sample_range
         ("R1", 22_118_400, 88_473_600),
         ("R2", 44_236_800, 5_662_310_400),
         ("R3", 172_800_000, 138_240_000_000),
-        ("R4", 108_000_000, 165_888_000_000),
+        ("R4", 18_000_000, 27_648_000_000),
     ],
 )
 def test_recordings_match_table_1(recording_id, samples, raw_bytes):
@@ -40,6 +48,41 @@ def test_short_cut_drops_and_shortens_gaps():
         (1200.0, 10.0),
     ]
     assert RECORDINGS["R1"].cut(1_805, "test").gaps[-1].duration_s == 5.0
+
+
+def test_r4_lasts_ten_minutes():
+    assert RECORDINGS["R4"].duration_s == 600
+
+
+def test_r4_gaps_lie_inside_the_recording():
+    spec = RECORDINGS["R4"]
+    assert spec.gaps == R4_GAPS
+    assert [(gap.start_s, gap.duration_s) for gap in spec.gaps] == [
+        (60.0, 1.0),
+        (120.0, 10.0),
+        (300.0, 60.0),
+    ]
+    for gap in spec.gaps:
+        first, stop = gap.sample_range(spec.rate_hz)
+        assert 0 <= first < stop <= spec.samples_per_channel
+
+
+def test_the_other_recordings_keep_the_shared_gaps():
+    for name in ("R1", "R2", "R3"):
+        assert RECORDINGS[name].gaps == GAPS
+
+
+@pytest.mark.parametrize("name", ["R1", "R2", "R3", "R4"])
+def test_levels_match_the_level_count_of_the_writer(name):
+    spec = RECORDINGS[name]
+    assert level_count(spec.samples_per_channel) == spec.levels
+
+
+def test_format_recordings_all_resolve():
+    assert FORMAT_RECORDINGS == ("R1-1h", "R2-1h", "R3-1h", "R4")
+    assert [resolve(name).id for name in FORMAT_RECORDINGS] == list(
+        FORMAT_RECORDINGS
+    )
 
 
 def test_rejects_an_unknown_recording():

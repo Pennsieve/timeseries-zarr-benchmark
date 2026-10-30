@@ -24,18 +24,22 @@ import httpx
 import pandas as pd
 
 from resampling_benchmark.load.generator import (
+    LINK_BYTES_PER_S,
     MEASURED_REQUESTS,
     REQUEST_TIMEOUT_S,
     RUN_TIME_LIMIT_S,
     WARMUP_REQUESTS,
     format_window,
 )
+from resampling_benchmark.summarize import median_charged_seconds
 from tszbench.recordings import RECORDINGS, resolve
 from tszbench.schemas import (
     COMPLETE_FILE,
     IDLE_WAIT_FILE,
     LINK_LIMITED_FILE,
     METHODS,
+    NOT_RUN_FILE,
+    REQUESTS_PATTERN,
     RESAMPLING_RAW_DIRECTORY,
     SERVER_METADATA_FILE,
     SERVER_MONITOR_FILE,
@@ -44,9 +48,6 @@ from tszbench.schemas import (
 )
 
 LOGGER = logging.getLogger("resampling_benchmark.orchestrate")
-
-LINK_BYTES_PER_S = 12.5e9 / 8
-"""Receive rate of a load generator link of 12.5 Gbps, in bytes per second."""
 
 USERS_PER_GENERATOR = 100
 START_DELAY_S = 15.0
@@ -58,11 +59,9 @@ stopped."""
 
 WINDOWS_S = (10, 60, 600, 3_600, 86_400)
 USERS_FULL = (1, 10, 100, 1_000)
-USERS_SHORT = (1, 100)
-FULL_RECORDINGS = ("R3", "R4")
-"""Recordings that run every user count."""
-
-R4_LONGEST_WINDOW_S = 3_600
+USERS_SINGLE = (1,)
+USER_COUNTS = {"R3": USERS_FULL, "R4": (1, 100)}
+"""User counts to run for each recording that does not run `USERS_SINGLE`."""
 
 HEALTH_TIMEOUT_S = 300.0
 
@@ -188,9 +187,9 @@ def plan_runs(
 
     The order nests method, recording, window, and user count. R1 to R4 come
     first in that order, then any other recording, such as a 1 h cut, in the
-    order given. R3 and R4 run 1, 10, 100, and 1000 users. Every other
-    recording runs 1 and 100. A window longer than the recording is left out,
-    and R4 stops at 1 h.
+    order given. R3 runs 1, 10, 100, and 1000 users, and R4 runs 1 and 100.
+    Every other recording runs 1 user. A window longer than the recording is
+    left out.
 
     Args:
         methods: Methods to run.
@@ -210,13 +209,11 @@ def plan_runs(
     chosen_windows = set(windows)
     for method in methods:
         for recording in ordered:
-            counts = USERS_FULL if recording in FULL_RECORDINGS else USERS_SHORT
+            counts = USER_COUNTS.get(recording, USERS_SINGLE)
             for window in WINDOWS_S:
                 if window not in chosen_windows:
                     continue
                 if window > durations[recording]:
-                    continue
-                if recording == "R4" and window > R4_LONGEST_WINDOW_S:
                     continue
                 for count in counts if users is None else tuple(users):
                     runs.append(RunSpec(method, recording, window, count))
@@ -537,6 +534,7 @@ def execute_run(
     directory.mkdir(parents=True, exist_ok=True)
     (directory / COMPLETE_FILE).unlink(missing_ok=True)
     (directory / LINK_LIMITED_FILE).unlink(missing_ok=True)
+    (directory / NOT_RUN_FILE).unlink(missing_ok=True)
     (directory / SERVER_METADATA_FILE).unlink(missing_ok=True)
     if spec.method == "server" and settings.idle_check is not None:
         waited = settings.idle_check(settings.server_url)
@@ -643,8 +641,10 @@ def execute_spec(
     users per generator, on twice the generators. When the hosts file holds too
     few generators for that, the shortfall is logged and only the first run
     stays. A run that stays with such a peak gets a `LINK_LIMITED_FILE`, and
-    so does a repeat whose own peak is still that high.
+    so does a repeat whose own peak is still that high. A repeat directory of
+    an earlier pass moves out of the results first with `_discard`.
     """
+    _discard(settings, f"{spec.name}-repeat")
     available = len(settings.hosts.generators)
     generators, per_generator = split_generators(spec.users, available)
     needed = math.ceil(spec.users / USERS_PER_GENERATOR)
@@ -837,6 +837,62 @@ def _numbers(
     return [int(part) for part in text.split(",")]
 
 
+def _staying_directory(spec: RunSpec, settings: Settings) -> Path:
+    """Return the directory of the run of a cell that stays in the results.
+
+    That is the repeat when the cell has one, and the first run otherwise.
+    """
+    repeat = settings.out / f"{spec.name}-repeat"
+    return (
+        repeat
+        if (repeat / COMPLETE_FILE).exists()
+        else settings.out / spec.name
+    )
+
+
+def _median_failed(directory: Path) -> bool:
+    median = median_charged_seconds(sorted(directory.glob(REQUESTS_PATTERN)))
+    return median is not None and median >= REQUEST_TIMEOUT_S
+
+
+def _discard(settings: Settings, name: str) -> None:
+    """Move the directory of a run out of the results, if it exists.
+
+    The directory goes to `<out>-discarded/<name>-<timestamp>`, a sibling of
+    the results directory, so `resampling_benchmark.summarize` no longer reads
+    it and no data is deleted.
+    """
+    source = settings.out / name
+    if not source.exists():
+        return
+    stamp = time.strftime("%Y%m%dT%H%M%S")
+    root = settings.out.with_name(f"{settings.out.name}-discarded")
+    target = root / f"{name}-{stamp}"
+    count = 0
+    while target.exists():
+        count += 1
+        target = root / f"{name}-{stamp}-{count}"
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.move(source, target)
+    LOGGER.warning("run %s: moved the earlier files to %s", name, target)
+
+
+def _mark_not_run(spec: RunSpec, settings: Settings, failed: str) -> None:
+    """Write the directory of a skipped run, with the name of the failed run.
+
+    A directory of an earlier partial run, and its repeat directory, move out
+    of the results with `_discard`. A directory that holds only a
+    `NOT_RUN_FILE` is rewritten in place.
+    """
+    for name in (spec.name, f"{spec.name}-repeat"):
+        held = {path.name for path in (settings.out / name).glob("*")}
+        if held - {NOT_RUN_FILE}:
+            _discard(settings, name)
+    directory = settings.out / spec.name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / NOT_RUN_FILE).write_text(f"{failed}\n")
+
+
 def run_grid(
     runs: Iterable[RunSpec],
     settings: Settings,
@@ -846,23 +902,51 @@ def run_grid(
     """Run every cell and return the number that failed.
 
     A cell that finishes without error gets a `COMPLETE_FILE` in each run
-    directory. With `skip_done`, a cell whose directory holds that file is
-    skipped.
+    directory. With `skip_done`, a cell whose run that stays in the results
+    holds that file is skipped. Only complete runs are skipped.
+
+    When the median charged request seconds of the run that stays in the
+    results reach `REQUEST_TIMEOUT_S`, every cell of the same method,
+    recording, and window with more users is not run. Its directory gets a
+    `NOT_RUN_FILE` that holds the name of the failed run. A complete run is
+    judged first, and a complete run above a failed run is kept as it is. A
+    partial run above a failed run moves out of the results with `_discard`.
+    The not-run cells come from the runs judged in this pass.
     """
     failures = 0
+    failed_runs: dict[tuple[str, str, int], tuple[int, str]] = {}
     for spec in runs:
-        directory = settings.out / spec.name
-        if skip_done and (directory / COMPLETE_FILE).exists():
-            LOGGER.info("run %s: done, skipped", spec.name)
+        cell = (spec.method, spec.recording, spec.window_s)
+        above = cell in failed_runs and spec.users > failed_runs[cell][0]
+        staying = _staying_directory(spec, settings)
+        done = (staying / COMPLETE_FILE).exists()
+        if done and (skip_done or above):
+            if above:
+                LOGGER.warning(
+                    "run %s: a completed run above the failed run %s is kept",
+                    spec.name,
+                    failed_runs[cell][1],
+                )
+            else:
+                LOGGER.info("run %s: done, skipped", spec.name)
+                if _median_failed(staying):
+                    failed_runs[cell] = (spec.users, staying.name)
+            continue
+        if above:
+            failed = failed_runs[cell][1]
+            LOGGER.info("run %s: not run, %s failed", spec.name, failed)
+            _mark_not_run(spec, settings, failed)
             continue
         try:
             results = execute_spec(spec, settings, runner)
         except (RuntimeError, TimeoutError) as error:
             failures += 1
             LOGGER.error("%s", error)
-        else:
-            for result in results:
-                (result.directory / COMPLETE_FILE).touch()
+            continue
+        for result in results:
+            (result.directory / COMPLETE_FILE).touch()
+        if _median_failed(results[-1].directory):
+            failed_runs[cell] = (spec.users, results[-1].directory.name)
     return failures
 
 

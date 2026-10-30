@@ -3,14 +3,18 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
-from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
-from resampling_benchmark.load.orchestrate import LINK_BYTES_PER_S
+from resampling_benchmark.load.generator import (
+    LINK_BYTES_PER_S,
+    REQUEST_TIMEOUT_S,
+)
 from resampling_benchmark.summarize import (
     FAILED_REQUEST_SECONDS_KEY,
     deployment_metadata,
     find_runs,
+    median_charged_seconds,
     summarize,
     summarize_run,
 )
@@ -19,6 +23,7 @@ from tszbench.recordings import RECORDINGS, RecordingSpec
 from tszbench.schemas import (
     LINK_LIMITED_FILE,
     MONITOR,
+    NOT_RUN_FILE,
     RESAMPLING_REQUESTS,
     RESAMPLING_REQUESTS_FILE,
     RESAMPLING_RUNS,
@@ -402,3 +407,98 @@ def test_the_deployment_metadata_leaves_out_what_the_run_lacks(
     run_directory: Path,
 ) -> None:
     assert deployment_metadata(find_runs(run_directory)) == {}
+
+
+def write_not_run(root: Path, name: str, failed: str) -> Path:
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / NOT_RUN_FILE).write_text(f"{failed}\n")
+    return directory
+
+
+def test_a_directory_with_only_a_not_run_file_is_a_run(
+    run_directory: Path,
+) -> None:
+    write_not_run(run_directory, "server-S1-10-20", "server-S1-10-2")
+    runs = find_runs(run_directory)
+    assert [run.run for run in runs] == ["server-S1-10-2", "server-S1-10-20"]
+    assert [run.not_run for run in runs] == [False, True]
+    assert runs[1].requests == ()
+
+
+def test_a_not_run_row_has_the_run_identity_and_no_statistics(
+    tmp_path: Path,
+) -> None:
+    write_not_run(tmp_path, "precomputed-R3-1h-600-100", "x")
+    row = summarize_run(find_runs(tmp_path)[0], lookup)
+    assert set(row) == set(RESAMPLING_RUNS)
+    assert row["not_run"] == "true"
+    assert row["method"] == "precomputed"
+    assert row["recording"] == "R3-1h"
+    assert row["window_s"] == "600"
+    assert row["users"] == 100
+    assert row["link_limited"] == "false"
+    assert row["repeated"] == "false"
+    empty = [
+        "requests",
+        "failures",
+        "failure_rate",
+        "median_s",
+        "p5_s",
+        "p95_s",
+        "median_bytes",
+        "requests_per_second",
+    ]
+    assert [row[name] for name in empty] == [""] * len(empty)
+
+
+def test_a_run_that_ran_is_not_marked_not_run(run_directory: Path) -> None:
+    row = summarize_run(find_runs(run_directory)[0], lookup)
+    assert row["not_run"] == "false"
+
+
+def test_a_not_run_directory_with_requests_counts_as_a_run(
+    run_directory: Path,
+) -> None:
+    (run_directory / "server-S1-10-2" / NOT_RUN_FILE).write_text("x\n")
+    (run,) = find_runs(run_directory)
+    assert run.not_run is False
+
+
+def test_a_window_with_a_decimal_point_survives_in_a_not_run_row(
+    tmp_path: Path,
+) -> None:
+    write_not_run(tmp_path, "server-R3-0.5-10", "server-R3-0.5-1")
+    row = summarize_run(find_runs(tmp_path)[0], lookup)
+    assert (row["window_s"], row["users"]) == ("0.5", 10)
+
+
+def test_summarize_writes_a_not_run_row_and_counts_no_requests_for_it(
+    run_directory: Path, tmp_path: Path
+) -> None:
+    write_not_run(run_directory, "server-S1-10-20", "server-S1-10-2")
+    results = tmp_path / "results"
+    requests, runs = summarize(run_directory, results, lookup)
+    assert (requests, runs) == (10, 2)
+    frame = pd.read_csv(
+        results / RESAMPLING_RUNS_FILE, comment="#", dtype=str
+    ).fillna("")
+    assert list(frame["not_run"]) == ["false", "true"]
+    assert frame.loc[1, "median_s"] == ""
+    assert frame.loc[1, "users"] == "20"
+
+
+def test_the_median_charged_seconds_count_a_failure_as_the_timeout(
+    run_directory: Path,
+) -> None:
+    paths = sorted((run_directory / "server-S1-10-2").glob("requests-*.csv"))
+    seconds = [1.0, 2.0, 3.0, 4.0, 5.0, 1.0, 180.5, REQUEST_TIMEOUT_S]
+    assert median_charged_seconds(paths) == pytest.approx(np.median(seconds))
+
+
+def test_the_median_charged_seconds_are_none_without_measured_requests(
+    tmp_path: Path,
+) -> None:
+    write_requests(tmp_path / "requests-0.csv", [request_row(0, warmup=True)])
+    assert median_charged_seconds([tmp_path / "requests-0.csv"]) is None
+    assert median_charged_seconds([]) is None

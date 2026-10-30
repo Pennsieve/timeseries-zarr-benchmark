@@ -116,10 +116,9 @@ def test_plan_skips_edf_of_r4_and_big_all_channel_reads() -> None:
         ("edf", kind, window) for kind in ("one", "all") for window in WINDOWS_S
     }
     assert {key for key in reasons if key[0] == "tszarr"} == {
-        ("tszarr", "all", 600),
-        ("tszarr", "all", 3600),
+        ("tszarr", "all", 600)
     }
-    assert len(measured) == 5 + 3
+    assert len(measured) == 4 + 3
 
 
 def test_plan_measures_the_overhead_once_for_each_recording_and_store() -> None:
@@ -242,7 +241,7 @@ def test_parse_part_reads_back_the_combination_of_a_reads_path(
 ) -> None:
     for combination in (
         COMBINATION,
-        Combination("R2-1h", "s3", "zarr-direct", "one", 3600),
+        Combination("R2-1h", "s3", "zarr-direct", "one", 600),
     ):
         assert parse_part(combination.reads_path(tmp_path)) == combination
 

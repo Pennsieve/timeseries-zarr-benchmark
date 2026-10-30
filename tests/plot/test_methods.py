@@ -5,12 +5,22 @@ from plot.methods import (
     budget_paragraph,
     check_paragraph,
     generation_paragraph,
+    not_run_paragraph,
     open_paragraph,
     upload_paragraph,
     versions_paragraph,
     write_methods,
 )
-from tests.plot.conftest import REPEATS, STOPPED_READS, write_check, write_open
+from tests.plot.conftest import (
+    REPEATS,
+    STOPPED_READS,
+    VERSION_HEADER,
+    run_rows,
+    write_check,
+    write_open,
+)
+from tszbench.csvmeta import CsvWriter
+from tszbench.schemas import GENERATION, RESAMPLING_RUNS
 
 
 def test_upload_paragraph_gives_the_median_rate_of_each_format(results_dir):
@@ -113,6 +123,26 @@ def test_generation_paragraph_follows_the_recording_order(results_dir):
     )
 
 
+def test_generation_paragraph_names_the_one_format_of_a_tszarr_only_recording(
+    results_dir,
+):
+    path = results_dir / "generation-R3.csv"
+    with CsvWriter(path, GENERATION, VERSION_HEADER) as writer:
+        writer.write(
+            {
+                "recording": "R3",
+                "format": "tszarr",
+                "seconds": 480.0,
+                "bytes": 1000,
+                "objects": 1,
+            }
+        )
+    assert generation_paragraph(results_dir) == (
+        "Generating R3-1h takes 10 s for EDF and 20 s for TS-Zarr. "
+        "Generating R3 takes 480 s for TS-Zarr."
+    )
+
+
 def test_check_paragraph_counts_equal_windows(results_dir):
     assert check_paragraph(results_dir) == (
         "The server and the precomputed read return equal arrays in three "
@@ -154,7 +184,7 @@ def test_write_methods_writes_one_paragraph_per_statement(
     assert [p.name for p in output.paths] == ["methods.txt"]
     assert output.caption == ""
     text = output.paths[0].read_text()
-    assert len(text.strip().split("\n\n")) == 6
+    assert len(text.strip().split("\n\n")) == 7
     assert text.isascii()
     assert messages == []
 
@@ -166,7 +196,7 @@ def test_write_methods_skips_a_paragraph_whose_csv_is_absent(
     (results_dir / "resampling-check.csv").unlink()
     messages: list[str] = []
     output = write_methods(results_dir, tmp_path, messages.append)
-    assert len(output.paths[0].read_text().strip().split("\n\n")) == 3
+    assert len(output.paths[0].read_text().strip().split("\n\n")) == 4
     assert messages == [
         "Methods open sentence: format-opens.csv not found",
         "Methods read budget sentence: format-opens.csv not found",
@@ -180,5 +210,41 @@ def test_write_methods_raises_without_any_data(tmp_path):
     messages: list[str] = []
     with pytest.raises(NoDataError):
         write_methods(empty, tmp_path / "out", messages.append)
-    assert len(messages) == 6
+    assert len(messages) == 7
     assert not (tmp_path / "out" / "methods.txt").exists()
+
+
+def _write_runs_with_not_run(results_dir) -> None:
+    rows = run_rows()
+    for row in [r for r in rows if r["users"] == 1000][::7]:
+        row["not_run"] = "true"
+        for column in ("median_s", "p5_s", "p95_s", "failure_rate"):
+            row[column] = ""
+    with CsvWriter(
+        results_dir / "resampling-runs.csv", RESAMPLING_RUNS, {}
+    ) as w:
+        w.write_all(rows)
+
+
+def test_not_run_paragraph_counts_a_repeated_cell_once(results_dir):
+    _write_runs_with_not_run(results_dir)
+    assert not_run_paragraph(results_dir) == (
+        "A run whose median request failed ends the user counts of its "
+        "method, recording, and window, and the larger user counts are not "
+        "run. Of 32 runs, two were not run, on R1 and R3."
+    )
+
+
+def test_not_run_paragraph_says_so_when_every_run_was_run(results_dir):
+    assert not_run_paragraph(results_dir).endswith("Every planned run was run.")
+
+
+def test_not_run_paragraph_skips_without_the_runs_file(results_dir):
+    (results_dir / "resampling-runs.csv").unlink()
+    with pytest.raises(NoDataError):
+        not_run_paragraph(results_dir)
+
+
+def test_write_methods_includes_the_not_run_paragraph(results_dir, tmp_path):
+    output = write_methods(results_dir, tmp_path / "out", lambda message: None)
+    assert "Every planned run was run." in output.paths[0].read_text()

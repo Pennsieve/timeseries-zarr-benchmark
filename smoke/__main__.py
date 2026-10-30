@@ -32,7 +32,8 @@ RECORDINGS = ("R1-1h", "R2-1h")
 """Recordings of the run. Every format of each is written."""
 
 PLOT_RECORDING = "R2-1h"
-"""Recording of Figures 2 and 3, Table 3, and the cost paragraph."""
+"""Recording of Figures 2 and 3, Table 3, and the cost paragraph. It is both the
+format recording and the resampling recording of the plot stage."""
 
 BUCKET = "tszbench-smoke"
 PREFIX = "data"
@@ -410,6 +411,7 @@ def run(out: Path) -> None:
             "--results", str(results),
             "--out", str(figures),
             "--recording", PLOT_RECORDING,
+            "--format-recording", PLOT_RECORDING,
         ),
         env,
     )  # fmt: skip

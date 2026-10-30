@@ -9,8 +9,12 @@ import httpx
 import pytest
 
 from resampling_benchmark.load import orchestrate
-from resampling_benchmark.load.orchestrate import (
+from resampling_benchmark.load.generator import (
     LINK_BYTES_PER_S,
+    REQUEST_TIMEOUT_S,
+)
+from resampling_benchmark.load.orchestrate import (
+    WINDOWS_S,
     Hosts,
     LocalRunner,
     RunSpec,
@@ -33,11 +37,13 @@ from resampling_benchmark.summarize import find_runs, summarize, summarize_run
 from tests.resampling_benchmark.conftest import TINY_ID, TINY_SPEC
 from tszbench.csvmeta import CsvWriter
 from tszbench.fs import StoreRoots
+from tszbench.recordings import resolve
 from tszbench.schemas import (
     COMPLETE_FILE,
     IDLE_WAIT_FILE,
     LINK_LIMITED_FILE,
     MONITOR,
+    NOT_RUN_FILE,
     RESAMPLING_REQUESTS,
     SERVER_METADATA_FILE,
 )
@@ -82,10 +88,8 @@ def test_a_malformed_hosts_line_is_rejected() -> None:
 
 def test_the_plan_nests_method_recording_window_and_users() -> None:
     runs = plan_runs()
-    assert len(runs) == 2 * (10 + 10 + 20 + 16)
     assert runs[0] == RunSpec("server", "R1", 10, 1)
-    assert runs[1] == RunSpec("server", "R1", 10, 100)
-    assert runs[2] == RunSpec("server", "R1", 60, 1)
+    assert runs[1] == RunSpec("server", "R1", 60, 1)
     methods = [run.method for run in runs]
     assert methods == sorted(methods, key=["server", "precomputed"].index)
     server = [run for run in runs if run.method == "server"]
@@ -111,14 +115,33 @@ def test_r3_runs_every_user_count_over_every_window() -> None:
     assert {run.window_s for run in runs} == {10, 60, 600, 3600, 86400}
 
 
-def test_r4_stops_at_one_hour_and_r1_and_r2_skip_10_and_1000_users() -> None:
+def test_the_plan_counts_runs_per_recording_over_both_methods() -> None:
+    runs = plan_runs()
+    counts = {
+        name: sum(run.recording == name for run in runs)
+        for name in ("R1", "R2", "R3", "R4")
+    }
+    duration = resolve("R4").duration_s
+    r4_windows = sum(window <= duration for window in WINDOWS_S)
+    assert counts == {"R1": 10, "R2": 10, "R3": 40, "R4": 2 * 2 * r4_windows}
+    assert len(runs) == sum(counts.values())
+
+
+def test_r4_runs_1_and_100_users_and_every_window_that_fits() -> None:
     runs = plan_runs(methods=["precomputed"])
     r4 = [run for run in runs if run.recording == "R4"]
-    assert max(run.window_s for run in r4) == 3_600
-    assert {run.users for run in r4} == {1, 10, 100, 1000}
+    duration = resolve("R4").duration_s
+    assert {run.users for run in r4} == {1, 100}
+    assert {run.window_s for run in r4} == {
+        window for window in WINDOWS_S if window <= duration
+    }
+
+
+def test_the_other_recordings_run_one_user() -> None:
+    runs = plan_runs(methods=["precomputed"])
     for name in ("R1", "R2"):
         own = [run for run in runs if run.recording == name]
-        assert {run.users for run in own} == {1, 100}
+        assert {run.users for run in own} == {1}
         assert {run.window_s for run in own} == {10, 60, 600, 3600, 86400}
 
 
@@ -132,7 +155,7 @@ def test_filters_narrow_the_plan() -> None:
 def test_a_cut_runs_after_the_full_recordings_and_only_windows_that_fit() -> (
     None
 ):
-    runs = plan_runs(methods=["server"], recordings=["R1-1h", "R2"], users=[1])
+    runs = plan_runs(methods=["server"], recordings=["R1-1h", "R2"])
     assert [run.recording for run in runs[:5]] == ["R2"] * 5
     assert [(run.recording, run.window_s) for run in runs[5:]] == [
         ("R1-1h", 10),
@@ -246,8 +269,13 @@ class FakeJob:
 class FakeRunner:
     """Records launches and writes canned CSVs on fetch."""
 
-    def __init__(self, peaks: dict[str, float] | None = None) -> None:
+    def __init__(
+        self,
+        peaks: dict[str, float] | None = None,
+        seconds: dict[str, float] | None = None,
+    ) -> None:
         self.peaks = peaks or {}
+        self.seconds = seconds or {}
         self.launches: list[tuple[str, list[str]]] = []
         self.stopped: list[str] = []
         self.status = 0
@@ -262,8 +290,9 @@ class FakeRunner:
     def fetch(self, host: str, remote: str, local: Path) -> bool:
         run = Path(remote).parent.name
         if "requests-" in remote:
-            with CsvWriter(local, RESAMPLING_REQUESTS, {}):
-                pass
+            with CsvWriter(local, RESAMPLING_REQUESTS, {}) as writer:
+                if run in self.seconds:
+                    writer.write_all(self.request_rows(run))
         else:
             with CsvWriter(local, MONITOR, {}) as writer:
                 writer.write(
@@ -278,6 +307,33 @@ class FakeRunner:
                     }
                 )
         return True
+
+    def request_rows(self, run: str) -> list[dict[str, object]]:
+        """Return one warm-up request and three measured requests of a run.
+
+        Every request takes the seconds given for the run, and fails when
+        that is at least `REQUEST_TIMEOUT_S`.
+        """
+        seconds = self.seconds[run]
+        status = "ok" if seconds < REQUEST_TIMEOUT_S else "timeout"
+        method, recording, window, users = run.removesuffix("-repeat").split(
+            "-"
+        )
+        return [
+            dict.fromkeys(RESAMPLING_REQUESTS, "")
+            | {
+                "run": run,
+                "method": method,
+                "recording": recording,
+                "window_s": window,
+                "users": users,
+                "sequence": sequence,
+                "seconds": seconds,
+                "status": status,
+                "warmup": "true" if sequence == 0 else "false",
+            }
+            for sequence in range(4)
+        ]
 
     def generator_launches(self) -> list[list[str]]:
         return [
@@ -694,6 +750,231 @@ def test_a_run_started_again_drops_its_old_complete_file(
     runner.status = 1
     assert run_grid([spec], configured, runner) == 1
     assert not (tmp_path / "out" / spec.name / COMPLETE_FILE).exists()
+
+
+GRID = [RunSpec("server", "R3", 10, users) for users in (1, 10, 100, 1000)]
+
+
+def not_run_names(tmp_path: Path) -> dict[str, str]:
+    """Return the failed-run name held by each not-run directory."""
+    return {
+        directory.name: (directory / NOT_RUN_FILE).read_text().strip()
+        for directory in sorted((tmp_path / "out").iterdir())
+        if (directory / NOT_RUN_FILE).exists()
+    }
+
+
+def test_users_above_a_run_with_a_failed_median_are_not_run(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(
+        seconds={
+            "server-R3-10-1": 2.0,
+            "server-R3-10-10": REQUEST_TIMEOUT_S,
+        }
+    )
+    assert run_grid(GRID, settings(tmp_path, 1), runner) == 0
+    assert len(runner.generator_launches()) == 2
+    assert not_run_names(tmp_path) == {
+        "server-R3-10-100": "server-R3-10-10",
+        "server-R3-10-1000": "server-R3-10-10",
+    }
+    assert not any(
+        (tmp_path / "out" / name / "requests-0.csv").exists()
+        for name in not_run_names(tmp_path)
+    )
+
+
+def test_a_median_below_the_timeout_does_not_stop_the_user_counts(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(
+        seconds={
+            f"server-R3-10-{u}": REQUEST_TIMEOUT_S - 1
+            for u in (1, 10, 100, 1000)
+        }
+    )
+    run_grid(GRID, settings(tmp_path, 1), runner)
+    assert len(runner.generator_launches()) == 4
+    assert not_run_names(tmp_path) == {}
+
+
+def test_a_failure_stops_only_its_own_method_recording_and_window(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(
+        seconds={
+            "server-R3-10-1": REQUEST_TIMEOUT_S,
+            "server-R3-60-1": 1.0,
+            "server-R3-60-10": 1.0,
+            "precomputed-R3-10-1": 1.0,
+            "precomputed-R3-10-10": 1.0,
+        }
+    )
+    runs = [
+        RunSpec(method, "R3", window, users)
+        for method in ("server", "precomputed")
+        for window in (10, 60)
+        for users in (1, 10)
+    ]
+    run_grid(runs, settings(tmp_path, 1), runner)
+    assert not_run_names(tmp_path) == {"server-R3-10-10": "server-R3-10-1"}
+    assert len(runner.generator_launches()) == 7
+
+
+def test_the_skip_judges_the_repeat_that_replaces_a_link_limited_run(
+    tmp_path: Path,
+) -> None:
+    first = f"{GRID[1].name}"
+    runner = FakeRunner(
+        peaks={first: 0.9 * LINK_BYTES_PER_S},
+        seconds={
+            GRID[0].name: 1.0,
+            first: REQUEST_TIMEOUT_S,
+            f"{first}-repeat": 5.0,
+            GRID[2].name: 1.0,
+            GRID[3].name: 1.0,
+        },
+    )
+    run_grid(GRID, settings(tmp_path, 4), runner)
+    assert not_run_names(tmp_path) == {}
+
+
+def test_the_skip_names_a_failed_repeat(tmp_path: Path) -> None:
+    first = GRID[1].name
+    runner = FakeRunner(
+        peaks={first: 0.9 * LINK_BYTES_PER_S},
+        seconds={
+            GRID[0].name: 1.0,
+            first: 5.0,
+            f"{first}-repeat": REQUEST_TIMEOUT_S,
+        },
+    )
+    run_grid(GRID, settings(tmp_path, 4), runner)
+    assert not_run_names(tmp_path) == {
+        GRID[2].name: f"{first}-repeat",
+        GRID[3].name: f"{first}-repeat",
+    }
+
+
+def test_skip_done_does_not_run_users_above_a_failure_that_stands(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(seconds={GRID[0].name: REQUEST_TIMEOUT_S})
+    configured = settings(tmp_path, 1)
+    run_grid(GRID, configured, runner, skip_done=True)
+    assert len(runner.generator_launches()) == 1
+    run_grid(GRID, configured, runner, skip_done=True)
+    assert len(runner.generator_launches()) == 1
+    assert set(not_run_names(tmp_path)) == {g.name for g in GRID[1:]}
+
+
+def test_skip_done_runs_a_not_run_directory_once_its_failure_is_gone(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(seconds={GRID[0].name: REQUEST_TIMEOUT_S})
+    configured = settings(tmp_path, 1)
+    run_grid(GRID[:2], configured, runner)
+    assert set(not_run_names(tmp_path)) == {GRID[1].name}
+    runner.seconds = {GRID[0].name: 1.0}
+    run_grid(GRID[:1], configured, runner)
+    run_grid(GRID[:2], configured, runner, skip_done=True)
+    assert not_run_names(tmp_path) == {}
+    assert (tmp_path / "out" / GRID[1].name / COMPLETE_FILE).exists()
+    assert len(runner.generator_launches()) == 3
+
+
+def test_skip_done_judges_a_finished_run_before_the_next_user_count(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(seconds={GRID[0].name: REQUEST_TIMEOUT_S})
+    configured = settings(tmp_path, 1)
+    run_grid(GRID[:1], configured, runner, skip_done=True)
+    run_grid(GRID, configured, runner, skip_done=True)
+    assert len(runner.generator_launches()) == 1
+    assert set(not_run_names(tmp_path)) == {g.name for g in GRID[1:]}
+
+
+def test_a_run_that_runs_removes_its_not_run_file(tmp_path: Path) -> None:
+    runner = FakeRunner(seconds={GRID[0].name: REQUEST_TIMEOUT_S})
+    configured = settings(tmp_path, 1)
+    run_grid(GRID[:2], configured, runner)
+    assert set(not_run_names(tmp_path)) == {GRID[1].name}
+    run_grid(GRID[1:2], configured, runner)
+    assert not_run_names(tmp_path) == {}
+    assert (tmp_path / "out" / GRID[1].name / COMPLETE_FILE).exists()
+
+
+def test_a_completed_larger_run_survives_a_skip_done_pass_with_a_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    runner = FakeRunner(seconds={GRID[3].name: 1.0})
+    configured = settings(tmp_path, 1)
+    run_grid(GRID[3:], configured, runner)
+    runner.seconds = {GRID[0].name: REQUEST_TIMEOUT_S}
+    with caplog.at_level(logging.WARNING):
+        run_grid(GRID, configured, runner, skip_done=True)
+    kept = tmp_path / "out" / GRID[3].name
+    assert (kept / COMPLETE_FILE).exists()
+    assert (kept / "requests-0.csv").exists()
+    assert not (kept / NOT_RUN_FILE).exists()
+    assert "completed run above the failed run" in caplog.text
+    assert set(not_run_names(tmp_path)) == {GRID[1].name, GRID[2].name}
+
+
+def test_a_completed_larger_run_is_kept_without_skip_done_too(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(seconds={GRID[3].name: 1.0})
+    configured = settings(tmp_path, 1)
+    run_grid(GRID[3:], configured, runner)
+    runner.seconds = {GRID[0].name: REQUEST_TIMEOUT_S}
+    run_grid(GRID, configured, runner)
+    assert (tmp_path / "out" / GRID[3].name / COMPLETE_FILE).exists()
+    assert len(runner.generator_launches()) == 2
+
+
+def test_a_partial_run_above_a_failure_moves_out_of_the_results(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner(seconds={GRID[1].name: 1.0})
+    runner.status = 1
+    configured = settings(tmp_path, 1)
+    assert run_grid(GRID[1:2], configured, runner) == 1
+    runner.status = 0
+    runner.seconds = {GRID[0].name: REQUEST_TIMEOUT_S}
+    run_grid(GRID[:2], configured, runner)
+    directory = tmp_path / "out" / GRID[1].name
+    assert sorted(path.name for path in directory.iterdir()) == [NOT_RUN_FILE]
+    (moved,) = (tmp_path / "out-discarded").iterdir()
+    assert moved.name.startswith(f"{GRID[1].name}-")
+    assert (moved / "requests-0.csv").exists()
+
+
+def test_a_rerun_moves_the_stale_repeat_out_of_the_results(
+    tmp_path: Path,
+) -> None:
+    ten = GRID[1].name
+    runner = FakeRunner(
+        peaks={ten: 0.9 * LINK_BYTES_PER_S},
+        seconds={
+            GRID[0].name: 1.0,
+            ten: 5.0,
+            f"{ten}-repeat": REQUEST_TIMEOUT_S,
+            GRID[2].name: 1.0,
+        },
+    )
+    configured = settings(tmp_path, 4)
+    run_grid(GRID[:2], configured, runner)
+    assert (tmp_path / "out" / f"{ten}-repeat" / COMPLETE_FILE).exists()
+    runner.peaks = {}
+    run_grid(GRID[1:2], configured, runner)
+    assert not (tmp_path / "out" / f"{ten}-repeat").exists()
+    (moved,) = (tmp_path / "out-discarded").iterdir()
+    assert moved.name.startswith(f"{ten}-repeat-")
+    run_grid(GRID[:3], configured, runner, skip_done=True)
+    assert not_run_names(tmp_path) == {}
+    assert (tmp_path / "out" / GRID[2].name / COMPLETE_FILE).exists()
 
 
 @pytest.mark.network

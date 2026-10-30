@@ -7,7 +7,7 @@ from tests.plot.conftest import MEDIAN_FACTOR, base_bytes, trim_reads
 
 
 def test_series_medians_match_the_synthetic_reads(format_benchmark, seconds):
-    series = figure2_series(format_benchmark, "R3")
+    series = figure2_series(format_benchmark, "R3-1h")
     row = series[
         (series["store"] == "http")
         & (series["read_kind"] == "all")
@@ -22,7 +22,7 @@ def test_series_medians_match_the_synthetic_reads(format_benchmark, seconds):
 
 
 def test_series_leaves_out_direct_and_overhead_reads(format_benchmark):
-    series = figure2_series(format_benchmark, "R3")
+    series = figure2_series(format_benchmark, "R3-1h")
     assert set(series["format"]) == {
         "edf",
         "nwb-hdf5-time",
@@ -40,7 +40,7 @@ def test_series_raises_for_an_absent_recording(format_benchmark):
 
 
 def test_overhead_floor_is_the_median_per_store(format_benchmark):
-    floor = overhead_floor(format_benchmark, "R3")
+    floor = overhead_floor(format_benchmark, "R3-1h")
     assert floor["local"] == pytest.approx(0.005 * MEDIAN_FACTOR)
     assert floor["s3"] == pytest.approx(0.015 * MEDIAN_FACTOR)
 
@@ -49,7 +49,7 @@ def test_figure2_draws_one_panel_per_store_and_read_kind(
     format_benchmark, tmp_path, capture
 ):
     saved = capture(module)
-    output = figure2(format_benchmark, tmp_path, "R3", "fig2-test")
+    output = figure2(format_benchmark, tmp_path, "R3-1h", "fig2-test")
     assert [p.name for p in output.paths] == ["fig2-test.pdf", "fig2-test.png"]
     assert all(p.stat().st_size > 1000 for p in output.paths)
     axes = saved[0].axes
@@ -61,7 +61,7 @@ def test_figure2_draws_one_panel_per_store_and_read_kind(
 
 
 def test_series_holds_the_median_bytes_per_read(format_benchmark):
-    series = figure2_series(format_benchmark, "R3")
+    series = figure2_series(format_benchmark, "R3-1h")
     row = series[
         (series["store"] == "s3")
         & (series["read_kind"] == "one")
@@ -95,7 +95,7 @@ def test_figure2_draws_the_bytes_panels_below_the_seconds_panels(
 
 
 def test_figure2_caption_counts_reads(format_benchmark, tmp_path):
-    caption = figure2(format_benchmark, tmp_path, "R3").caption
+    caption = figure2(format_benchmark, tmp_path, "R3-1h").caption
     assert "of R3" in caption
     assert "median bytes that the store served per read" in caption
     assert "2,268 reads" in caption
@@ -106,7 +106,9 @@ def test_figure2_caption_counts_reads(format_benchmark, tmp_path):
 def test_figure2_caption_gives_the_fewest_and_most_reads_of_a_combination(
     format_benchmark, tmp_path
 ):
-    caption = figure2(trim_reads(format_benchmark, 5), tmp_path, "R3").caption
+    caption = figure2(
+        trim_reads(format_benchmark, 5), tmp_path, "R3-1h"
+    ).caption
     assert "Each combination holds between five and 21 reads." in caption
     assert "the read budget of 1 h, once it has made at least three reads." in (
         caption
@@ -118,8 +120,8 @@ def test_figure2_caption_counts_only_the_reads_of_the_plotted_recording(
 ):
     trimmed = trim_reads(format_benchmark, 5)
     assert "Each combination holds 21 reads." in (
-        figure2(trimmed, tmp_path, "R1").caption
+        figure2(trimmed, tmp_path, "R1-1h").caption
     )
     assert "Each combination holds between five and 21 reads." in (
-        figure2(trimmed, tmp_path, "R3").caption
+        figure2(trimmed, tmp_path, "R3-1h").caption
     )

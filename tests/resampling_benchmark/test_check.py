@@ -57,7 +57,10 @@ def all_windows() -> list[tuple[str, int]]:
 
 def test_windows_follow_the_plan() -> None:
     assert windows_for(RECORDINGS["R3"]) == list(WINDOWS_S)
-    assert windows_for(RECORDINGS["R4"]) == [10, 60, 600, 3_600]
+    duration = RECORDINGS["R4"].duration_s
+    assert windows_for(RECORDINGS["R4"]) == [
+        window for window in WINDOWS_S if window <= duration
+    ]
     assert windows_for(RECORDINGS["R4"], [60, 86_400]) == [60]
 
 

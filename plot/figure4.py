@@ -19,6 +19,7 @@ from plot.data import (
     link_limited_sentence,
     recording_order,
     select_runs,
+    without_not_run,
 )
 from plot.style import (
     FAILED_MARKER,
@@ -43,12 +44,14 @@ def figure4_series(runs: Any) -> Any:
     """Return the runs at 1 and 100 users that Figure 4 draws.
 
     One row per method, recording, window, and user count, chosen by
-    `plot.data.select_runs` and sorted by raw bytes.
+    `plot.data.select_runs` and sorted by raw bytes. A run that was not run is
+    left out. A recording with only one of the two user counts has points at
+    that count only.
 
     Raises:
         NoDataError: No run has 1 or 100 users.
     """
-    chosen = select_runs(runs)
+    chosen = without_not_run(select_runs(runs))
     chosen = chosen[chosen["users"].isin(USER_COUNTS)]
     if chosen.empty:
         raise NoDataError("no the resampling benchmark runs at 1 or 100 users")

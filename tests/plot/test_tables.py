@@ -2,9 +2,18 @@ import pandas as pd
 import pytest
 
 from plot.data import NoDataError
-from plot.tables import latex, table1, table2, table3, table4, write_table
+from plot.tables import (
+    NOT_RUN,
+    latex,
+    table1,
+    table2,
+    table3,
+    table4,
+    write_table,
+)
 from tests.plot.conftest import (
     mark_link_limited,
+    mark_not_run,
     trim_reads,
 )
 from tszbench.recordings import RECORDINGS
@@ -17,7 +26,7 @@ def test_table1_lists_every_recording():
     assert r3[:2] == ("R3", "intracranial EEG")
     assert r3[2:] == ("200", "2000 Hz", "24 h", "172,800,000", "138 GB", "8")
     assert table.rows[3][3] == "30 kHz"
-    assert table.rows[3][4] == "1 h"
+    assert table.rows[3][4] == "10 min"
     assert table.frame["raw_bytes"].iloc[2] == RECORDINGS["R3"].raw_bytes
 
 
@@ -130,6 +139,29 @@ def test_table3_reads_fail_where_both_runs_failed(runs):
     assert table3(changed).frame["users_1"].iloc[0] == "fail"
 
 
+def test_table3_reads_not_run_where_a_run_was_not_run(runs):
+    changed = mark_not_run(runs, "server", "R3", 600, 1000)
+    changed = mark_not_run(changed, "precomputed", "R3", 10, 100)
+    table = table3(changed)
+    assert table.frame["users_1000"].iloc[1] == NOT_RUN
+    assert table.rows[1][-1] == "not run"
+    assert table.frame["users_100"].iloc[0] == NOT_RUN
+    assert "not run where a run with fewer users" in table.caption
+    assert "not run" not in table3(runs).caption
+
+
+def test_table3_reads_not_run_before_fail(runs):
+    # The server run at 10 s and 1000 users has failures.
+    changed = mark_not_run(runs, "precomputed", "R3", 10, 1000)
+    assert table3(changed).frame["users_1000"].iloc[0] == NOT_RUN
+
+
+def test_table3_counts_no_requests_of_a_run_that_was_not_run(runs):
+    changed = mark_not_run(runs, "server", "R3", 600, 1000)
+    assert "1,395 requests" in table3(runs).caption
+    assert "1,215 requests" in table3(changed).caption
+
+
 def test_table3_marks_a_link_limited_run_in_the_cell_and_the_frame(runs):
     changed = mark_link_limited(runs, "precomputed", "R3", 600, 10)
     table = table3(changed)
@@ -219,7 +251,7 @@ def test_table4_divides_tszarr_seconds_by_zarr_direct_seconds(format_benchmark):
     frame = table4(format_benchmark).frame.set_index(
         ["recording", "store", "read_kind", "window_s"]
     )
-    row = frame.loc[("R3", "s3", "one", 10)]
+    row = frame.loc[("R3-1h", "s3", "one", 10)]
     # The synthetic seconds scale with the format index: 6 for tszarr, 7 for
     # zarr-direct. The two share the spread of the repeats.
     assert row["ratio"] == pytest.approx(6 / 7)
@@ -231,8 +263,8 @@ def test_table4_has_one_row_per_recording_store_read_kind_and_window(
 ):
     table = table4(format_benchmark)
     assert len(table.frame) == 2 * 3 * 2 * 3
-    assert list(table.frame["recording"])[:1] == ["R1"]
-    assert table.rows[0][:4] == ("R1", "local disk", "one channel", "1 s")
+    assert list(table.frame["recording"])[:1] == ["R1-1h"]
+    assert table.rows[0][:4] == ("R1-1h", "local disk", "one channel", "1 s")
     assert len(table.rows[0]) == len(table.headers)
 
 

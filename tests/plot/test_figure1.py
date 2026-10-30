@@ -17,7 +17,7 @@ def test_rows_hold_only_the_10_s_all_channel_reads(format_benchmark):
 
 def test_rows_copy_overhead_into_a_recording_without_it(format_benchmark):
     rows = figure1_rows(format_benchmark)
-    for recording in ("R1", "R3"):
+    for recording in ("R1-1h", "R3-1h"):
         overhead = rows[
             (rows["recording"] == recording) & (rows["format"] == "overhead")
         ]
@@ -43,7 +43,7 @@ def test_figure1_has_one_panel_per_recording_and_one_row_per_format(
     saved = capture(module)
     figure1(format_benchmark, tmp_path)
     axes = saved[0].axes
-    assert [axis.get_title() for axis in axes] == ["R1", "R3"]
+    assert [axis.get_title() for axis in axes] == ["R1-1h", "R3-1h"]
     by_position = dict(
         zip(
             axes[0].get_yticks(),
@@ -61,7 +61,7 @@ def test_figure1_caption_counts_reads_per_store(format_benchmark, tmp_path):
     caption = figure1(format_benchmark, tmp_path).caption
     assert caption.startswith("Figure 1.")
     assert (
-        "R3: 147 reads on local disk, 147 reads on HTTP, 147 reads on S3."
+        "R3-1h: 147 reads on local disk, 147 reads on HTTP, 147 reads on S3."
         in caption
     )
     assert caption.isascii()

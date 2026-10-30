@@ -40,6 +40,7 @@ TEXT_COLUMNS = frozenset(
         "user",
         "repeated",
         "link_limited",
+        "not_run",
         "warmup",
         "equal",
     }
@@ -233,6 +234,21 @@ def link_limited(rows: Any) -> Any:
     link and no repeat with fewer users per generator replaced the run.
     """
     return as_bool(rows["link_limited"])
+
+
+def not_run(rows: Any) -> Any:
+    """Return a boolean series that is true for the runs of `not_run`.
+
+    A run is not run when the orchestrator skipped it because a run of the same
+    method, recording, and window with fewer users had a median request that
+    failed. Such a row has no statistics.
+    """
+    return as_bool(rows["not_run"])
+
+
+def without_not_run(rows: Any) -> Any:
+    """Return the rows of runs that were run, with a fresh index."""
+    return rows[~not_run(rows)].reset_index(drop=True)
 
 
 def link_limited_sentence(rows: Any) -> str:

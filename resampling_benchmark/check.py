@@ -20,7 +20,7 @@ import numpy as np
 import numpy.typing as npt
 
 from resampling_benchmark.load.generator import ServerRequester
-from resampling_benchmark.load.orchestrate import R4_LONGEST_WINDOW_S, WINDOWS_S
+from resampling_benchmark.load.orchestrate import WINDOWS_S
 from resampling_benchmark.load.precomputed import (
     READ_THREADS,
     PrecomputedReader,
@@ -217,11 +217,10 @@ def windows_for(
         spec: The recording.
         chosen: When given, only these windows are kept.
     """
-    limit = R4_LONGEST_WINDOW_S if spec.id == "R4" else spec.duration_s
     return [
         window
         for window in WINDOWS_S
-        if window <= limit and (chosen is None or window in chosen)
+        if window <= spec.duration_s and (chosen is None or window in chosen)
     ]
 
 

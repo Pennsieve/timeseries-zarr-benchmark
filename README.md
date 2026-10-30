@@ -37,7 +37,8 @@ local disk with windows of 1, 10, and 60 seconds, and plots Figures 1 and 2:
 .venv/bin/python -m generate --recording R1-1h --root data --results results
 .venv/bin/python -m format_benchmark --recordings R1-1h --stores local --local-root data \
     --windows 1,10,60 --max-repeats 10
-.venv/bin/python -m plot --results results --out figures --recording R1-1h
+.venv/bin/python -m plot --results results --out figures --recording R1-1h \
+    --format-recording R1-1h
 ```
 
 `make smoke` runs every stage on this machine with local servers in place of
@@ -54,7 +55,8 @@ suite on AWS.
 ## Facts to know
 
 - Recordings are `R1` to `R4`, and the 1 hour cuts `R1-1h`, `R2-1h`, and `R3-1h`.
-  R4 has no EDF file. Every stage takes these names.
+  R4 lasts 10 minutes and has no EDF file. The format benchmark reads the cuts and
+  R4, with windows of 1 second to 10 minutes. Every stage takes these names.
 - A store root is a directory or an S3 prefix. It holds `<recording>/<file>`
   for each format and the 1-byte object `overhead/one-byte`. The file names are
   in `tszbench/schemas.py`.
@@ -67,8 +69,8 @@ suite on AWS.
   finished, and `resampling_benchmark.load.orchestrate --skip-done` skips the
   runs it finished.
 - A combination is one recording, format, store, and window. Each combination
-  keeps reading until the timed reads add up to `--read-budget-s` (1 hour). It
-  always makes at least `--min-reads` reads (3). `--max-repeats` caps the
+  keeps reading until the timed reads add up to `--read-budget-s` (60 seconds).
+  It always makes at least `--min-reads` reads (1). `--max-repeats` caps the
   reads.
 - NWB on Zarr runs on hdmf-zarr 0.14 over Zarr v3. One environment holds every
   library.

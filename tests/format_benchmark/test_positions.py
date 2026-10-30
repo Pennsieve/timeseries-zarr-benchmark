@@ -13,12 +13,12 @@ from tszbench import schemas
 from tszbench.recordings import RECORDINGS
 
 
-def test_windows_are_one_second_to_one_hour() -> None:
-    assert WINDOWS_S == (1, 10, 60, 600, 3600)
+def test_windows_are_one_second_to_ten_minutes() -> None:
+    assert WINDOWS_S == (1, 10, 60, 600)
 
 
 def test_repeats_follow_the_plan() -> None:
-    assert [repeats(window) for window in WINDOWS_S] == [100, 100, 100, 20, 10]
+    assert [repeats(window) for window in WINDOWS_S] == [100, 100, 100, 20]
 
 
 def test_repeats_reject_a_window_outside_the_plan() -> None:
@@ -27,7 +27,7 @@ def test_repeats_reject_a_window_outside_the_plan() -> None:
 
 
 def test_window_index_is_the_place_in_the_plan() -> None:
-    assert [window_index(window) for window in WINDOWS_S] == [0, 1, 2, 3, 4]
+    assert [window_index(window) for window in WINDOWS_S] == [0, 1, 2, 3]
 
 
 @pytest.mark.parametrize("window_s", WINDOWS_S)
@@ -58,7 +58,7 @@ def test_positions_differ_between_recordings() -> None:
     ]
 
 
-@pytest.mark.parametrize("window_s", [1, 60, 600, 3600])
+@pytest.mark.parametrize("window_s", WINDOWS_S)
 def test_positions_keep_the_window_inside_the_recording(
     window_s: int,
 ) -> None:
@@ -108,17 +108,19 @@ def test_cut_of_a_recording_shares_the_seed_but_not_the_starts() -> None:
     assert [read.start_us for read in full] != [read.start_us for read in cut]
 
 
-@pytest.mark.parametrize("window_s", [600, 3600])
-def test_all_channel_reads_of_r4_above_the_limit_are_skipped(
-    window_s: int,
-) -> None:
-    reason = skip_reason(RECORDINGS["R4"], "tszarr", "all", window_s)
+def test_all_channel_read_of_r4_above_the_limit_is_skipped() -> None:
+    reason = skip_reason(RECORDINGS["R4"], "tszarr", "all", 600)
     assert reason is not None
     assert str(MAX_READ_BYTES) in reason
 
 
 def test_all_channel_read_of_r4_at_one_minute_is_measured() -> None:
     assert skip_reason(RECORDINGS["R4"], "tszarr", "all", 60) is None
+
+
+def test_window_of_r4_at_ten_minutes_starts_at_sample_zero() -> None:
+    reads = positions(RECORDINGS["R4"], 600)
+    assert {read.start_us for read in reads} == {0}
 
 
 def test_one_channel_reads_of_r4_are_measured_at_every_window() -> None:

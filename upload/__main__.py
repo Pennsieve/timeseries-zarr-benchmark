@@ -46,6 +46,14 @@ def build_parser() -> argparse.ArgumentParser:
         "pull", help="sync the bucket to a local root with `aws s3 sync`"
     )
     add_store(download)
+    download.add_argument(
+        "--recordings",
+        default=None,
+        help=(
+            "comma-separated recordings to sync, such as R1-1h,R4; omit it "
+            "to sync everything below the prefix"
+        ),
+    )
 
     storage = commands.add_parser(
         "storage",
@@ -87,6 +95,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.root,
             args.bucket,
             args.prefix,
+            recordings=(
+                None
+                if args.recordings is None
+                else [name for name in args.recordings.split(",") if name]
+            ),
             region=args.region,
             endpoint_url=args.s3_endpoint_url,
         )

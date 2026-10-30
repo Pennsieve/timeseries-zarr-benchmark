@@ -29,6 +29,7 @@ from tszbench.schemas import (
 )
 
 DEFAULT_RECORDING = "R3"
+DEFAULT_FORMAT_RECORDING = "R3-1h"
 CAPTIONS_FILE = "captions.txt"
 
 
@@ -47,7 +48,12 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--recording",
         default=DEFAULT_RECORDING,
-        help="recording of Figures 2 and 3, Table 3, and the cost paragraph",
+        help="recording of Figure 3, Table 3, and the cost paragraph",
+    )
+    parser.add_argument(
+        "--format-recording",
+        default=DEFAULT_FORMAT_RECORDING,
+        help="recording of Figure 2 of the format benchmark",
     )
     parser.add_argument(
         "--prices",
@@ -82,6 +88,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     results: Path = args.results
     out: Path = args.out
     recording: str = args.recording
+    format_recording: str = args.format_recording
     outputs: list[Output] = []
 
     def run(label: str, job: Callable[[], Output]) -> None:
@@ -108,8 +115,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if format_benchmark is not None:
         run("Figure 1", lambda: figure1(format_benchmark, out))
-        run("Figure 2", lambda: figure2(format_benchmark, out, recording))
-        for name in _supplement(format_benchmark["recording"], recording):
+        run(
+            "Figure 2",
+            lambda: figure2(format_benchmark, out, format_recording),
+        )
+        for name in _supplement(
+            format_benchmark["recording"], format_recording
+        ):
             run(
                 f"Figure 2 of {name}",
                 partial(figure2, format_benchmark, out, name, f"fig2-{name}"),

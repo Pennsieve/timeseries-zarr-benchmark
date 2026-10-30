@@ -184,11 +184,32 @@ def pull(
     bucket: str,
     prefix: str,
     *,
+    recordings: Sequence[str] | None = None,
     run: Runner = run_command,
     region: str | None = None,
     endpoint_url: str | None = None,
 ) -> None:
-    """Sync everything below prefix in bucket to root. The sync is not timed."""
+    """Sync objects below prefix in bucket to root. The sync is not timed.
+
+    Without recordings, one sync copies everything below prefix. With
+    recordings, one sync copies each `<recording>/` prefix, and one more copies
+    the directory of `schemas.ONE_BYTE_OBJECT`.
+    """
     root.mkdir(parents=True, exist_ok=True)
-    source = s3_uri(bucket, prefix, "").rstrip("/") + "/"
-    run(sync_command(source, root, region=region, endpoint_url=endpoint_url))
+    if recordings is None:
+        paths = [""]
+    else:
+        paths = [
+            *(f"{name}/" for name in recordings),
+            schemas.ONE_BYTE_OBJECT.rpartition("/")[0] + "/",
+        ]
+    for path in paths:
+        source = s3_uri(bucket, prefix, path).rstrip("/") + "/"
+        run(
+            sync_command(
+                source,
+                root / path,
+                region=region,
+                endpoint_url=endpoint_url,
+            )
+        )

@@ -15,6 +15,7 @@ from plot.data import (
     format_short,
     format_sig,
     link_limited,
+    not_run,
     reads_sentence,
     recording_order,
     select_runs,
@@ -23,6 +24,9 @@ from plot.data import (
 from plot.style import FORMAT_LABELS, READ_KIND_LABELS, STORE_LABELS
 from tszbench.recordings import RECORDINGS, resolve
 from tszbench.schemas import FORMATS
+
+NOT_RUN = "not run"
+"""Cell of Table 3 where the server run or the precomputed run was not run."""
 
 FAIL = "fail"
 """Cell of Table 3 where the server run had failures."""
@@ -316,9 +320,10 @@ def table3(runs: Any, recording: str = "R3") -> Table:
 
     One row per window and one column per user count. A cell is the median
     seconds per request of the server run divided by that of the precomputed
-    run. A cell reads `fail` when the server run has a failure rate above 0.
-    It reads `fail (precomputed)` when only the precomputed run does. A cell is
-    empty when a method has no run at that window and user count. A cell of the
+    run. A cell reads `not run` when either run was not run. This takes
+    precedence over a failure in the other run. Otherwise a cell reads `fail`
+    when the server run has a failure rate above 0, and `fail (precomputed)`
+    when only the precomputed run does. A cell is empty when a method has no run at that window and user count. A cell of the
     LaTeX table ends with `LINK_MARK` when either run is link limited, and the
     frame holds a boolean column `users_<count>_link` for the same fact.
 
@@ -349,6 +354,12 @@ def table3(runs: Any, recording: str = "R3") -> Table:
             precomputed = cell[cell["method"] == "precomputed"]
             if server.empty or precomputed.empty:
                 row.append(float("nan"))
+                row_marks.append(False)
+                continue
+            if bool(not_run(server).iloc[0]) or bool(
+                not_run(precomputed).iloc[0]
+            ):
+                row.append(NOT_RUN)
                 row_marks.append(False)
                 continue
             row_marks.append(
@@ -408,6 +419,12 @@ def table3(runs: Any, recording: str = "R3") -> Table:
             f"{count_noun(used, 'request')}, warm-up requests left out. A "
             f"cell reads {FAIL} where the server run had failures, and "
             f"{FAIL_PRECOMPUTED} where only the precomputed run had failures."
+            + (
+                f" A cell reads {NOT_RUN} where a run with fewer users had a "
+                "median request that failed."
+                if any(NOT_RUN in row for row in values)
+                else ""
+            )
             + (
                 f" A cell ends with{LINK_MARK} where a load generator "
                 "received more than half of its link in a run and no repeat "

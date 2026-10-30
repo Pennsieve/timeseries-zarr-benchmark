@@ -20,6 +20,7 @@ from plot.data import (
     format_short,
     select_runs,
     window_label,
+    without_not_run,
 )
 
 PRICES_FILE = Path(__file__).with_name("prices.json")
@@ -144,7 +145,7 @@ def window_costs(
     plus its S3 GET requests at the GET price, plus its median response bytes
     at the data-out price. The sustained rate is the highest
     `requests_per_second` among the server runs of the window with
-    `failure_rate` equal to 0. Both methods pay the data-out price because both
+    `failure_rate` equal to 0. A run that was not run counts for neither. Both methods pay the data-out price because both
     send their bytes to a client outside AWS.
 
     Args:
@@ -156,7 +157,7 @@ def window_costs(
     Raises:
         NoDataError: The recording has no precomputed run, or no GET count.
     """
-    chosen = select_runs(runs)
+    chosen = without_not_run(select_runs(runs))
     chosen = chosen[chosen["recording"] == recording]
     gets = gets_per_request(requests, prices, recording)
     get_usd = prices["s3_get_usd_per_1000_requests"] / 1000

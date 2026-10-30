@@ -24,6 +24,7 @@ from plot.data import (
     join_words,
     load_csv,
     recording_order,
+    select_runs,
     spell_count,
 )
 from plot.style import FORMAT_LABELS, STORE_LABELS
@@ -212,6 +213,34 @@ def check_paragraph(results: Path) -> str:
     )
 
 
+def not_run_paragraph(results: Path) -> str:
+    """Return the rule that skips user counts, with the number of runs skipped.
+
+    Raises:
+        NoDataError: `resampling-runs.csv` is absent or holds no rows.
+    """
+    path = results / schemas.RESAMPLING_RUNS_FILE
+    if not path.exists():
+        raise NoDataError(f"{schemas.RESAMPLING_RUNS_FILE} not found")
+    frame = load_csv(path, schemas.RESAMPLING_RUNS)
+    if frame.empty:
+        raise NoDataError(f"no rows in {schemas.RESAMPLING_RUNS_FILE}")
+    frame = select_runs(frame)
+    skipped = frame[as_bool(frame["not_run"])]
+    rule = (
+        "A run whose median request failed ends the user counts of its method, "
+        "recording, and window, and the larger user counts are not run."
+    )
+    if skipped.empty:
+        return f"{rule} Every planned run was run."
+    names = join_words(recording_order(skipped["recording"]))
+    verb = "was" if len(skipped) == 1 else "were"
+    return (
+        f"{rule} Of {spell_count(len(frame))} runs, "
+        f"{spell_count(len(skipped))} {verb} not run, on {names}."
+    )
+
+
 def _header_paths(results: Path) -> list[Path]:
     """Return the result CSVs that exist, in a fixed order."""
     fixed = (
@@ -277,6 +306,7 @@ PARAGRAPHS: tuple[tuple[str, Callable[[Path], str]], ...] = (
     ("read budget sentence", budget_paragraph),
     ("generation sentence", generation_paragraph),
     ("equality check sentence", check_paragraph),
+    ("not run sentence", not_run_paragraph),
     ("versions sentence", versions_paragraph),
 )
 """Name and writer of each paragraph of `methods.txt`, in file order."""

@@ -5,9 +5,12 @@ in its order, copies the results back, and destroys the machines. Each step
 names the host it runs on. Commands on an instance run from
 `~/timeseries-zarr-benchmark`, the clone that the Terraform user data makes.
 
-Several steps run for hours. Start them inside `tmux` on the instance so that a
-dropped SSH connection does not stop them. Every stage can run again with the
-same options and continues where it stopped, as the README describes.
+The run takes about 6 h from the first apply to the destroy. Generation, upload,
+and the pull to the file server take about 1 h. The format benchmark takes 2 to
+3 h, and the resampling benchmark about 2 h. Start each long step inside `tmux`
+on the instance so that a dropped SSH connection does not stop it. Every stage
+can run again with the same options and continues where it stopped, as the
+README describes.
 
 ## Before you start
 
@@ -43,9 +46,8 @@ which is 20 generators of 50 users, so the repeat also runs at 1000 users. A
 repeat that still passes half the link stays in the results, and
 `resampling-runs.csv` marks it in the `link_limited` column.
 
-Generation and the format benchmark take days and use no load generator. Create
-the other machines first, and the 20 load generators before the resampling
-benchmark:
+Generation and the format benchmark use no load generator. Create the other
+machines first, and the 20 load generators before the resampling benchmark:
 
 ```bash
 terraform init
@@ -115,13 +117,19 @@ done
 
 ## Generate the recordings
 
-The client writes every format of each recording to its data volume at `/data`.
-The plan generates R3-1h before R3. Run one recording per process:
+The client writes the recordings to its data volume at `/data`. The format
+benchmark reads the 1 h cuts and R4, so they are written in every format. The
+resampling benchmark reads R1, R2, and R3 at full length, which are written in
+TS-Zarr only. The plan generates R3-1h before R3. Run one recording per process:
 
 ```bash
-for recording in R1 R2 R3-1h R3 R4; do
+for recording in R1-1h R2-1h R3-1h R4; do
     .venv/bin/python -m generate --recording $recording --root /data \
         --results results --workers 32
+done
+for recording in R1 R2 R3; do
+    .venv/bin/python -m generate --recording $recording --root /data \
+        --results results --workers 32 --formats tszarr
 done
 ```
 
@@ -134,7 +142,7 @@ Each upload times `aws s3 cp` of every format of one recording and writes
 `results/upload-<recording>.csv`. The 1-byte object goes up with each recording.
 
 ```bash
-for recording in R1 R2 R3 R4; do
+for recording in R1-1h R2-1h R3-1h R4 R1 R2 R3; do
     .venv/bin/python -m upload s3 --root /data --bucket $BUCKET --region $REGION \
         --recording $recording
 done
@@ -142,17 +150,20 @@ done
 
 ## Pull to the file server
 
-The file server copies the bucket to its data volume, which nginx serves:
+The file server copies the recordings of the format benchmark and the 1-byte
+object to its data volume, which nginx serves:
 
 ```bash
 ssh $FILE_SERVER "cd timeseries-zarr-benchmark && .venv/bin/python -m upload pull \
-    --root /data --bucket $BUCKET --region $REGION"
+    --root /data --bucket $BUCKET --region $REGION \
+    --recordings R1-1h,R2-1h,R3-1h,R4"
 ```
 
 ## Measure storage
 
 ```bash
-.venv/bin/python -m upload storage --root /data --recordings R1,R2,R3,R4
+.venv/bin/python -m upload storage --root /data \
+    --recordings R1-1h,R2-1h,R3-1h,R4,R1,R2,R3
 ```
 
 This writes `results/storage.csv`, which Table 2 reads. Measuring a recording
@@ -163,31 +174,12 @@ again replaces its rows and keeps the rows of the others.
 The format benchmark runs every combination in its own process and drops the
 page cache of the client and of the file server before each one. Each
 combination stops after the read that brings the sum of its timed read seconds
-to at least `--read-budget-s`, which is 1 h, once it has `--min-reads` reads,
-which is 3.
+to at least `--read-budget-s`, which is 60 s, once it has `--min-reads` reads,
+which is 1. A read is never interrupted. The slowest single reads fetch HDF5
+chunks from S3 one after the other and take several minutes to half an hour
+each. Most combinations end in seconds.
 
-Before the full grid, time the slowest kind of read: R3 in the
-`nwb-hdf5-channel` format, every channel, a 3600 s window, on the S3 store.
-HDF5 fetches the 175,800 chunks of that read one after the other. One read is
-enough, and `--results results-timing` keeps the timing run out of the real
-results:
-
-```bash
-.venv/bin/python -m format_benchmark \
-    --recordings R3 --stores s3 --formats nwb-hdf5-channel --read-kinds all \
-    --windows 3600 --max-repeats 1 --results results-timing \
-    --s3-root $BUCKET \
-    --drop-caches "sudo /usr/local/sbin/drop-caches" \
-    --drop-caches "ssh $FILE_SERVER sudo /usr/local/sbin/drop-caches"
-```
-
-Expect tens of minutes for the one read. Read the time from
-`results-timing/format-reads.csv`. Use it to estimate the run time of the
-slowest combinations before you start the grid. If one read takes longer than a
-third of `--read-budget-s`, the combination reaches the budget before
-`--min-reads`, so `--min-reads` sets its run time.
-
-Then run the full grid:
+Run the grid:
 
 ```bash
 .venv/bin/python -m format_benchmark \
@@ -196,7 +188,8 @@ Then run the full grid:
     --drop-caches "ssh $FILE_SERVER sudo /usr/local/sbin/drop-caches"
 ```
 
-The defaults run every recording, store, format, read kind, and window. Each
+The defaults run R1-1h, R2-1h, R3-1h, and R4 on every store, format, read
+kind, and window. Each
 combination writes its part under `results/format-parts/`. The merge at the end
 writes `results/format-reads.csv` and `results/format-opens.csv` from every
 finished part, so a command that runs one recording or store keeps the rows of
@@ -257,13 +250,19 @@ Then run the grid from the client:
 The orchestrator waits for the service, then starts the monitors and the load
 generators of each run over SSH. Before each server run it waits until
 `/health` reports no task in flight, and writes the wait to `idle-wait-s.txt`
-in the run directory. It saves the run metadata that `/health` reports to
+in the run directory. A run stops sending requests 5 min after it starts. User
+counts run in ascending order. When the median request of a run fails, the
+orchestrator does not run the larger user counts of that method, recording, and
+window. It writes a `not-run` file in each of their run directories, which names
+the run that failed. It saves the run metadata that `/health` reports to
 `server-metadata.json` there. It copies each run's CSVs to
 `results/resampling-raw/<run>/` and writes a `complete` file there when every
 generator exits with status 0. It writes a `link-limited` file when a run stays
 with a generator receive rate above half the link. Add `--skip-done` when you
-start it again after a stop. It skips only the runs that have a `complete`
-file.
+start it again after a stop. It skips the runs that have a `complete` file. It
+decides again which runs are not run, from the runs of fewer users. It never
+deletes a complete run. It moves a partial run that is now not run to
+`results/resampling-raw-discarded/`.
 
 ## Summarize
 

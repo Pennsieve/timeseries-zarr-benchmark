@@ -189,6 +189,52 @@ def test_pull_syncs_the_bucket_to_the_root(tmp_path: Path) -> None:
     assert (tmp_path / "data").is_dir()
 
 
+def test_pull_of_recordings_syncs_each_prefix_and_the_one_byte_directory(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner()
+    root = tmp_path / "data"
+    s3.pull(root, BUCKET, "run1", recordings=["R1-1h", "R4"], run=runner)
+    assert runner.commands == [
+        ["aws", "s3", "sync", f"s3://{BUCKET}/run1/R1-1h/", str(root / "R1-1h")],
+        ["aws", "s3", "sync", f"s3://{BUCKET}/run1/R4/", str(root / "R4")],
+        ["aws", "s3", "sync", f"s3://{BUCKET}/run1/overhead/", str(root / "overhead")],
+    ]  # fmt: skip
+
+
+def test_pull_of_recordings_without_a_prefix_syncs_from_the_bucket_root(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner()
+    s3.pull(tmp_path, BUCKET, "", recordings=["R4"], run=runner)
+    assert [command[3] for command in runner.commands] == [
+        f"s3://{BUCKET}/R4/",
+        f"s3://{BUCKET}/overhead/",
+    ]
+
+
+def test_pull_of_recordings_passes_the_region_and_endpoint(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner()
+    s3.pull(
+        tmp_path,
+        BUCKET,
+        "",
+        recordings=["R4"],
+        run=runner,
+        region="us-east-1",
+        endpoint_url="http://127.0.0.1:5000",
+    )
+    for command in runner.commands:
+        assert command[-4:] == [
+            "--region",
+            "us-east-1",
+            "--endpoint-url",
+            "http://127.0.0.1:5000",
+        ]
+
+
 def test_run_command_reports_the_standard_error() -> None:
     with pytest.raises(RuntimeError, match="boom"):
         s3.run_command(["sh", "-c", "echo boom >&2; exit 3"])

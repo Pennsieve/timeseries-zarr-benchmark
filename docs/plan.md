@@ -34,7 +34,7 @@ Four synthetic recordings, each generated from one committed seed.
 | R1 | single-channel ambulatory EEG | 1 | 256 Hz | 24 h | 22,118,400 | 88 MB | 7 |
 | R2 | scalp EEG | 32 | 512 Hz | 24 h | 44,236,800 | 5.7 GB | 7 |
 | R3 | intracranial EEG | 200 | 2000 Hz | 24 h | 172,800,000 | 138 GB | 8 |
-| R4 | Neuropixels-like | 384 | 30 kHz | 1 h | 108,000,000 | 166 GB | 8 |
+| R4 | Neuropixels-like | 384 | 30 kHz | 10 min | 18,000,000 | 28 GB | 7 |
 
 R3 is the worked example of the manuscript. Level counts follow the 1024-bin threshold of
 the specification.
@@ -42,10 +42,15 @@ the specification.
 Each channel is Gaussian noise with a 1/f spectrum and a bump at 8 to 12 Hz, from a child
 seed of the master seed. R4 carries a bump at 300 to 3000 Hz instead. RMS amplitude is
 20 uV for R1 and R2, 50 uV for R3, and 100 uV for R4. Each recording has three planted
-gaps on channel 0: 1 s at 600 s, 10 s at 1200 s, and 10 min at 1800 s. All three lie
-inside the first hour, so the 1 h cuts hold them. Samples are quantized to a 0.125 uV
+gaps on channel 0. R1, R2, and R3 hold 1 s at 600 s, 10 s at 1200 s, and 10 min at
+1800 s. All three lie inside the first hour, so the 1 h cuts hold them. R4 holds 1 s at
+60 s, 10 s at 120 s, and 1 min at 300 s. Samples are quantized to a 0.125 uV
 grid, so the int16 EDF and the float32 copies hold the same values. EDF stores a gap
 sample as the lowest digital value, -32768, and the range reader returns it as NaN.
+
+The format benchmark reads the 1 h cuts R1-1h, R2-1h, and R3-1h, and R4. These four are
+written in every format below. R1, R2, and R3 at full length are written as TS-Zarr only,
+for the resampling benchmark.
 
 Files written per recording:
 
@@ -62,8 +67,7 @@ Files written per recording:
   threshold is 1024 bins. The root `zarr.json` holds the consolidated metadata.
 
 Every chunked file uses Zstd level 3 (through hdf5plugin for HDF5). EDF has no
-compression. The 1 h cuts of R1, R2, and R3 are written the same way for local
-reproduction.
+compression.
 
 Every format is written straight from the synthesizer. The TS-Zarr source is a
 `MultiChannelSource` that synthesizes each block on request. Seeded streaming filters
@@ -71,7 +75,7 @@ shape the noise. Their state carries across blocks, so no seam appears at a bloc
 and no channel is held in memory. The writer runs in one process and writes to local
 disk. Each bundle is therefore written locally and then uploaded. Each recording runs as
 its own process, and R3-1h runs before R3. Methods quotes the generation seconds of
-R3-1h, R3, and R4 per format.
+R3-1h and R4 per format, and of R3 in TS-Zarr.
 
 ## Software
 
@@ -121,25 +125,27 @@ options of the run.
 
 A read returns the raw samples of a window that starts at a random position. Two kinds of
 read are timed: one channel over the window, and every channel over the window. Window
-lengths are 1 s, 10 s, 1 min, 10 min, and 1 h. The same seeded positions serve every
-format and store, so each format reads the same windows.
+lengths are 1 s, 10 s, 1 min, and 10 min. The same seeded positions serve every format
+and store, so each format reads the same windows. The benchmark reads R1-1h, R2-1h,
+R3-1h, and R4. The time of a read depends on the window and the chunk layout. The length
+of the file does not change it.
 
 Each combination of recording, store, format, read kind, and window runs in a fresh
-process. The process opens the file and fetches metadata before the timer starts: the root
-`zarr.json`, the HDF5 superblock, or the EDF header. The timer runs from the read call to
-the decoded array in memory. Repeats are 100 reads for windows up to 1 min, 20 at 10 min,
-and 10 at 1 h. A read budget of 1 h (`READ_BUDGET_S`) caps each combination. It stops
-after the read that brings the sum of its timed read seconds to at least 1 h, once it has
-made three reads (`MIN_READS`). A combination with fewer planned reads makes them all. The
-open CSV records the reads made and the reads planned. The page cache is dropped on the
-client and on the file server before each process. A combination whose single read
-exceeds 8 GB is not measured. That excludes the all-channel reads of R4 at 10 min and
-1 h. Window starts are whole microseconds. Every format returns the samples whose start
-lies in the window, so a window of whole seconds holds exactly its length times the
-rate in samples per channel. Per read, the CSV records seconds, bytes transferred, the
-number of requests, and the number of samples returned. The open is timed once per
-process, for every format. Opening a TS-Zarr bundle fetches `zarr.json` and
-`recording.json` and parses the metadata.
+process. The process opens the file and fetches metadata before the timer starts: the
+root `zarr.json`, the HDF5 superblock, or the EDF header. The timer runs from the read
+call to the decoded array in memory. Repeats are 100 reads for windows up to 1 min and 20
+at 10 min. A read budget of 60 s (`READ_BUDGET_S`) caps each combination. It stops after
+the read that brings the sum of its timed read seconds to at least 60 s, once it has made
+one read (`MIN_READS`). A read is never interrupted, so a combination whose first read
+takes longer than the budget makes that one read. The open CSV records the reads made and
+the reads planned. The page cache is dropped on the client and on the file server before
+each process. A combination whose single read exceeds 8 GB is not measured. That excludes
+the all-channel read of R4 at 10 min. Window starts are whole microseconds. Every format
+returns the samples whose start lies in the window, so a window of whole seconds holds
+exactly its length times the rate in samples per channel. Per read, the CSV records
+seconds, bytes transferred, the number of requests, and the number of samples returned.
+The open is timed once per process, for every format. Opening a TS-Zarr bundle fetches
+`zarr.json` and `recording.json` and parses the metadata.
 
 Readers, all through fsspec so that the store is the only thing that changes:
 
@@ -175,8 +181,8 @@ with one row per column. A window that holds fewer than two entries per column (
 for the server, bins for the precomputed read) returns one row per entry. Such a response
 holds between 2000 and 3999 rows. That happens to both methods for R1 at 10 s, and to the
 precomputed read for R1 at 1 min, 10 min, and 1 h, and for R2 and R3 at 24 h. Windows are
-10 s, 1 min, 10 min, 1 h, and 24 h. R4 stops at 1 h. Two methods answer the same request
-from the same bundle in S3.
+10 s, 1 min, 10 min, 1 h, and 24 h. R4 stops at 10 min, its length. Two methods answer
+the same request from the same bundle in S3.
 
 For each request the resampling server splits each channel into groups of whole columns
 that span about one shard (4,194,304 samples). Each channel and group is one task on the
@@ -210,15 +216,14 @@ bytes of the server's response. The read fetches whole inner chunks, so bytes pe
 are recorded and shown.
 
 Users are simulated in closed loop. Each user sends a request, waits for the full
-response, decodes it, and sends the next one at a new random start. User counts are 1, 10,
-100, and 1000, with 100 users per load generator. Each user sends one warm-up request,
-which is dropped, and 10 measured requests. Users stop sending 20 min after the start of a
-run. A request that exceeds 180 s or returns an error (including S3 503 SlowDown) is a
-failure. Medians and percentiles count each failed request as 180 s, or as its own
-seconds when those are longer. At 12.5 Gbps, the 138 GB of float32 under a 24 h window of
-R3 takes 88 s to move. Before the grid, one timed 1-user request of R3 at 24 h must finish
-in under 180 s. Before each server run, the orchestrator waits until the server has no
-task in flight.
+response, decodes it, and sends the next one at a new random start. A load generator runs
+at most 100 users. Each user sends one warm-up request, which is dropped, and 10 measured
+requests. Users stop sending 5 min after the start of a run. A request that exceeds 180 s
+or returns an error (including S3 503 SlowDown) is a failure. Medians and percentiles
+count each failed request as 180 s, or as its own seconds when those are longer. At 12.5
+Gbps, the 138 GB of float32 under a 24 h window of R3 takes 88 s to move. Before the
+grid, one timed 1-user request of R3 at 24 h must finish in under 180 s. Before each
+server run, the orchestrator waits until the server has no task in flight.
 
 Per request the CSV records the method, window, start, user count, seconds from dispatch
 to the decoded array, bytes received, requests sent to S3, the level read, and status. Per
@@ -234,8 +239,10 @@ to NaN. The check window gives every column the same whole number of level bins 
 at level 0) and starts on a bin edge at a whole microsecond. It is centered on the
 longest planted gap shorter than the window, so the gap channel takes part.
 
-User-count runs cover every window on R3 and R4. The 1-user and 100-user runs also cover
-R1 and R2 at every window.
+R3 runs 1, 10, 100, and 1000 users at every window. R4 runs 1 and 100 users, and R1 and
+R2 run 1 user, at every window. The user counts of a method, recording, and window run in
+ascending order. Once the median request of a run is a failure, the larger user counts of
+that method, recording, and window are not run, and the results mark them not run.
 
 ## Storage and cost
 
@@ -261,22 +268,25 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
   The direct counterpart of OME Figure 1.
 - Figure 2. Median seconds per read (upper rows) and median bytes per read (lower rows)
   against window length, log-log, one line per format, one panel per store and read
-  kind, for R3. A dotted line marks the median Overhead read of each store. The other
+  kind, for R3-1h. A dotted line marks the median Overhead read of each store. The other
   recordings go to the supplement.
 - Figure 3. The resampling benchmark on R3. One small plot per window. The x axis is the
   number of simultaneous users. The y axis is seconds per request, median with a p5 to p95
   band. One line for the server and one for the precomputed read. A cross at the median
-  marks a run with failures, and an open ring marks a link-limited run. A second row shows
-  requests per second. R4 goes to the supplement.
+  marks a run with failures, and an open ring marks a link-limited run. A user count that
+  was not run has no point. A second row shows requests per second. R4 goes to the
+  supplement.
 - Figure 4. All four recordings on one plot. The x axis is raw bytes under the window. The
   y axis is median seconds per request. One line per method, drawn at 1 user and at 100
-  users, with the failure cross and the link-limited ring of Figure 3. This figure shows
+  users, with the failure cross and the link-limited ring of Figure 3. R1 and R2 have the
+  1-user line only. This figure shows
   how each method's time depends on the raw bytes under the window.
 - Table 1. The recordings table above.
 - Table 2. Storage: bytes at rest, object count, and multiplier per recording and format.
 - Table 3. Median server seconds divided by median precomputed-read seconds for each
   window and user count on R3. A cell reads "fail" where the server run had failures and
-  "fail (precomputed)" where only the precomputed run had failures. A cell ends with
+  "fail (precomputed)" where only the precomputed run had failures. A cell reads "not
+  run" where a run was not run after a failure at fewer users. A cell ends with
   "(link)" where either run is link limited. The 10 s, 10 min, and 24 h rows are the
   page, overview, and whole-recording zooms of the manuscript's worked example.
 - Table 4. Median seconds per read of the TS-Zarr reader and of zarr-python on the raw
@@ -284,8 +294,8 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
   read kind, and window.
 - Methods sentences: the upload rate per format, the median seconds and requests of the
   timed open per format and store, the combinations that stopped at the read budget, the
-  generation seconds of R3-1h, R3, and R4, the equality check, and the versions of
-  timeseries-zarr and tsdownsample with the instance types.
+  runs not run, the generation seconds of R3-1h, R3, and R4, the equality check, and the
+  versions of timeseries-zarr and tsdownsample with the instance types.
 
 Every figure reads one CSV and nothing else. Captions name the statistic, the number of
 reads or requests, and the store. Captions of the format benchmark state the read budget,

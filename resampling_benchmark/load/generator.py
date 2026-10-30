@@ -39,11 +39,14 @@ WARMUP_REQUESTS = 1
 MEASURED_REQUESTS = 10
 """Requests each user sends after the warm-up."""
 
-RUN_TIME_LIMIT_S = 1200.0
+RUN_TIME_LIMIT_S = 300.0
 """Seconds after the start of a run when users stop sending requests."""
 
 REQUEST_TIMEOUT_S = 180.0
 """Seconds after which a request counts as a timeout."""
+
+LINK_BYTES_PER_S = 12.5e9 / 8
+"""Receive rate of a load generator link of 12.5 Gbps, in bytes per second."""
 
 STATUS_OK = "ok"
 STATUS_TIMEOUT = "timeout"

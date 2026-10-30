@@ -84,6 +84,19 @@ def test_server_price_uses_the_best_run_without_failures(runs, requests):
     )
 
 
+def test_server_price_ignores_a_run_that_was_not_run(runs, requests):
+    changed = runs.copy()
+    mask = (
+        (changed["method"] == "server")
+        & (changed["window_s"] == 10)
+        & (changed["repeated"] == "true")
+    )
+    changed.loc[mask, "not_run"] = "true"
+    costs = {c.window_s: c for c in window_costs(changed, requests, PRICES)}
+    # The 5.0 requests per second of the repeated run no longer counts.
+    assert costs[10].server_requests_per_second == pytest.approx(10**0.5 + 0.1)
+
+
 def test_server_price_is_none_when_every_run_failed(runs, requests):
     failed = runs.copy()
     failed.loc[failed["method"] == "server", "failure_rate"] = 1.0

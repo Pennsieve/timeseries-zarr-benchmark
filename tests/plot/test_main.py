@@ -8,8 +8,8 @@ OUTPUTS = {
     "fig1.png",
     "fig2.pdf",
     "fig2.png",
-    "fig2-R1.pdf",
-    "fig2-R1.png",
+    "fig2-R1-1h.pdf",
+    "fig2-R1-1h.png",
     "fig3.pdf",
     "fig3.png",
     "fig3-R1.pdf",
@@ -64,11 +64,49 @@ def test_main_uses_the_recording_option(results_dir, tmp_path):
     main(
         ["--results", str(results_dir), "--out", str(out), "--recording", "R1"]
     )
-    assert "fig2-R3.pdf" in {p.name for p in out.iterdir()}
+    names = {p.name for p in out.iterdir()}
+    assert "fig3-R3.pdf" in names
+    assert "fig2-R1-1h.pdf" in names
     assert (
         "on R1"
         in (out / "table3.csv").parent.joinpath("captions.txt").read_text()
     )
+
+
+def test_main_uses_the_format_recording_option(results_dir, tmp_path):
+    out = tmp_path / "out"
+    main(
+        [
+            "--results",
+            str(results_dir),
+            "--out",
+            str(out),
+            "--format-recording",
+            "R1-1h",
+        ]
+    )
+    names = {p.name for p in out.iterdir()}
+    assert "fig2-R3-1h.pdf" in names
+    assert "fig2-R1-1h.pdf" not in names
+    assert "fig3-R1.pdf" in names
+
+
+def test_main_skips_figure_2_for_a_format_recording_that_is_absent(
+    results_dir, tmp_path, capsys
+):
+    out = tmp_path / "out"
+    main(
+        [
+            "--results",
+            str(results_dir),
+            "--out",
+            str(out),
+            "--format-recording",
+            "R4",
+        ]
+    )
+    assert "skipped Figure 2" in capsys.readouterr().err
+    assert "fig2.pdf" not in {p.name for p in out.iterdir()}
 
 
 def test_main_skips_outputs_whose_csv_is_absent(results_dir, tmp_path, capsys):

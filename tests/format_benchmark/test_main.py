@@ -16,7 +16,7 @@ from tests.format_benchmark.conftest import TINY_ID, TINY_SPEC
 from tszbench import schemas
 from tszbench.csvmeta import read_header, read_rows
 from tszbench.fs import StoreRoots
-from tszbench.recordings import RECORDINGS, RecordingSpec
+from tszbench.recordings import FORMAT_RECORDINGS, RECORDINGS, RecordingSpec
 
 REPEATS = 2
 HOUR_SPEC = RECORDINGS["R1"].cut(3600, "1h")
@@ -379,6 +379,11 @@ def test_main_rejects_an_unknown_format(
         )
     assert exit_info.value.code == 2
     assert "must be one of" in capsys.readouterr().err
+
+
+def test_recordings_default_to_the_format_recordings() -> None:
+    arguments = format_benchmark_main.build_parser().parse_args([])
+    assert arguments.recordings.split(",") == list(FORMAT_RECORDINGS)
 
 
 def test_main_rejects_an_unknown_recording(

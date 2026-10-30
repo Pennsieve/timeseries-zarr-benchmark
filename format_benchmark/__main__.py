@@ -33,7 +33,7 @@ from format_benchmark.worker import (
 from tszbench import schemas
 from tszbench.csvmeta import CsvWriter, read_rows, run_metadata
 from tszbench.fs import StoreRoots
-from tszbench.recordings import RECORDINGS
+from tszbench.recordings import FORMAT_RECORDINGS
 
 SERVER_TIMEOUT_S = 10.0
 """Timeout of the request that reads the Server header."""
@@ -202,10 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--recordings",
-        default=",".join(RECORDINGS),
+        default=",".join(FORMAT_RECORDINGS),
         help=(
             "Comma-separated recordings, R1 to R4 or R1-1h to R3-1h. "
-            "Default: R1,R2,R3,R4."
+            f"Default: {','.join(FORMAT_RECORDINGS)}."
         ),
     )
     parser.add_argument(
@@ -226,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--windows",
         default=",".join(str(window) for window in WINDOWS_S),
-        help="Comma-separated window lengths in seconds. Default: all five.",
+        help="Comma-separated window lengths in seconds. Default: all four.",
     )
     parser.add_argument(
         "--results",

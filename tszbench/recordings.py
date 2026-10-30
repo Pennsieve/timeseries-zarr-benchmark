@@ -104,10 +104,18 @@ GAPS = (
     Gap(channel=0, start_s=1200.0, duration_s=10.0),
     Gap(channel=0, start_s=1800.0, duration_s=600.0),
 )
-"""The three gaps of every recording. All lie inside the first hour."""
+"""The three gaps of R1, R2, and R3. All lie inside the first hour."""
+
+R4_GAPS = (
+    Gap(channel=0, start_s=60.0, duration_s=1.0),
+    Gap(channel=0, start_s=120.0, duration_s=10.0),
+    Gap(channel=0, start_s=300.0, duration_s=60.0),
+)
+"""The three gaps of R4. All lie inside its 10 minutes."""
 
 DAY_S = 86_400
 HOUR_S = 3_600
+TEN_MINUTES_S = 600
 
 RECORDINGS = {
     spec.id: spec
@@ -156,17 +164,20 @@ RECORDINGS = {
             modality="Neuropixels-like",
             channels=384,
             rate_hz=30_000,
-            duration_s=HOUR_S,
+            duration_s=TEN_MINUTES_S,
             rms_uv=100.0,
             bump_hz=(300.0, 3000.0),
             seed=4,
             edf_record_s=None,
-            levels=8,
-            gaps=GAPS,
+            levels=7,
+            gaps=R4_GAPS,
         ),
     )
 }
 """The four recordings of the benchmark, by id."""
+
+FORMAT_RECORDINGS = ("R1-1h", "R2-1h", "R3-1h", "R4")
+"""The recordings the format benchmark reads by default."""
 
 
 def hour_cut(recording_id: str) -> RecordingSpec:

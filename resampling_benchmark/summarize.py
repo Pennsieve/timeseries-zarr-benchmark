@@ -15,13 +15,18 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S, STATUS_OK
-from resampling_benchmark.load.orchestrate import LINK_BYTES_PER_S
+from resampling_benchmark.load.generator import (
+    LINK_BYTES_PER_S,
+    REQUEST_TIMEOUT_S,
+    STATUS_OK,
+)
 from tszbench.csvmeta import CsvWriter, read_header, run_metadata
 from tszbench.recordings import RecordingSpec, resolve
 from tszbench.schemas import (
     GENERATOR_MONITOR_PATTERN,
     LINK_LIMITED_FILE,
+    METHODS,
+    NOT_RUN_FILE,
     REQUESTS_PATTERN,
     RESAMPLING_RAW_DIRECTORY,
     RESAMPLING_REQUESTS,
@@ -52,6 +57,8 @@ class RunFiles:
             None when the run has none.
         link_limited: True when the run directory holds a
             `tszbench.schemas.LINK_LIMITED_FILE`.
+        not_run: True for the directory of a run that was skipped. It holds a
+            `tszbench.schemas.NOT_RUN_FILE` and no request CSV.
     """
 
     run: str
@@ -60,14 +67,29 @@ class RunFiles:
     generator_monitors: tuple[Path, ...]
     server_metadata: Path | None = None
     link_limited: bool = False
+    not_run: bool = False
 
 
 def find_runs(root: Path) -> list[RunFiles]:
-    """Return the runs under root that have at least one request CSV."""
+    """Return the runs under root.
+
+    A directory counts when it holds at least one request CSV, or when it holds
+    a `tszbench.schemas.NOT_RUN_FILE` and no request CSV.
+    """
     runs = []
     for directory in sorted(path for path in root.iterdir() if path.is_dir()):
         requests = tuple(sorted(directory.glob(REQUESTS_PATTERN)))
         if not requests:
+            if (directory / NOT_RUN_FILE).is_file():
+                runs.append(
+                    RunFiles(
+                        run=directory.name,
+                        requests=(),
+                        server_monitors=(),
+                        generator_monitors=(),
+                        not_run=True,
+                    )
+                )
             continue
         runs.append(
             RunFiles(
@@ -114,6 +136,36 @@ def charged_seconds(measured: Any) -> Any:
     return own.where(measured["status"] == STATUS_OK, failed)
 
 
+def measured_requests(requests: Any) -> Any:
+    """Return the measured rows of request rows, with numeric columns.
+
+    Warm-up rows are left out. `seconds`, `dispatch_s`, and `bytes` become
+    numbers, and a value that is not a number becomes NaN.
+    """
+    measured = requests[requests["warmup"] != TRUE].copy()
+    for column in ("seconds", "dispatch_s", "bytes"):
+        measured[column] = _numbers(measured, column)
+    return measured
+
+
+def median_charged_seconds(paths: Sequence[Path]) -> float | None:
+    """Return the median of `charged_seconds` over the measured requests.
+
+    Args:
+        paths: Request CSVs of one run.
+
+    Returns:
+        The median, or None when the CSVs hold no measured request.
+    """
+    frames = [read_requests(path) for path in paths]
+    if not frames:
+        return None
+    measured = measured_requests(pd.concat(frames, ignore_index=True))
+    if measured.empty:
+        return None
+    return float(np.median(charged_seconds(measured).to_numpy(dtype=float)))
+
+
 def _monitor_peak(paths: Sequence[Path], column: str) -> float | None:
     peak: float | None = None
     for path in paths:
@@ -122,6 +174,36 @@ def _monitor_peak(paths: Sequence[Path], column: str) -> float | None:
             value = float(frame[column].max())
             peak = value if peak is None else max(peak, value)
     return peak
+
+
+def not_run_row(run: str) -> dict[str, object]:
+    """Return the `RESAMPLING_RUNS` row of a run that was skipped.
+
+    The method, recording, window, and users come from the run name, such as
+    `server-R3-1h-600-100`. Every statistic is empty.
+
+    Raises:
+        ValueError: The run name does not have the form
+            `<method>-<recording>-<window>-<users>`.
+    """
+    method, _, rest = run.partition("-")
+    recording, window_s, users = (
+        rest.rsplit("-", 2) if rest.count("-") >= 2 else ("", "", "")
+    )
+    if method not in METHODS or not users.isdecimal():
+        raise ValueError(f"run {run}: not a run name")
+    row: dict[str, object] = dict.fromkeys(RESAMPLING_RUNS, "")
+    row |= {
+        "run": run,
+        "method": method,
+        "recording": recording,
+        "window_s": window_s,
+        "users": int(users),
+        "repeated": "false",
+        "link_limited": "false",
+        "not_run": TRUE,
+    }
+    return row
 
 
 def summarize_run(
@@ -137,6 +219,8 @@ def summarize_run(
     the first measured dispatch to the last measured completion.
     `failure_rate` is the failures over every measured request.
 
+    A run that was skipped gets `not_run_row`.
+
     Args:
         files: The run's CSV files.
         lookup: Returns the spec of a recording id.
@@ -144,6 +228,8 @@ def summarize_run(
     Raises:
         ValueError: The run's request CSVs hold no rows.
     """
+    if files.not_run:
+        return not_run_row(files.run)
     frames = [read_requests(path) for path in files.requests]
     requests = pd.concat(frames, ignore_index=True)
     if requests.empty:
@@ -151,10 +237,7 @@ def summarize_run(
     first = requests.iloc[0]
     spec = lookup(first["recording"])
     window_s = float(first["window_s"])
-    measured = requests[requests["warmup"] != TRUE].copy()
-    measured["seconds"] = _numbers(measured, "seconds")
-    measured["dispatch_s"] = _numbers(measured, "dispatch_s")
-    measured["bytes"] = _numbers(measured, "bytes")
+    measured = measured_requests(requests)
     good = measured[measured["status"] == STATUS_OK]
     total = len(measured)
     failures = total - len(good)
@@ -187,6 +270,7 @@ def summarize_run(
             else "false"
         ),
         "link_limited": TRUE if files.link_limited else "false",
+        "not_run": "false",
     }
     if total:
         seconds = charged_seconds(measured).to_numpy(dtype=float)

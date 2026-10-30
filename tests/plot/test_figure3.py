@@ -7,6 +7,7 @@ from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
 from tests.plot.conftest import (
     FAILED_REQUEST_SECONDS,
     mark_link_limited,
+    mark_not_run,
     ring_points,
 )
 
@@ -25,6 +26,29 @@ def test_series_uses_the_repeated_run(runs):
         & (series["users"] == 100)
     ]
     assert row["requests_per_second"].iloc[0] == 5.0
+
+
+def test_series_leaves_out_a_run_that_was_not_run(runs):
+    changed = mark_not_run(runs, "server", "R3", 600, 1000)
+    series = figure3_series(changed, "R3")
+    assert len(series) == 2 * 2 * 4 - 1
+    left = series[
+        (series["method"] == "server")
+        & (series["window_s"] == 600)
+        & (series["users"] == 1000)
+    ]
+    assert left.empty
+
+
+def test_figure3_draws_without_the_runs_that_were_not_run(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    changed = mark_not_run(runs, "server", "R3", 600, 1000)
+    changed = mark_not_run(changed, "precomputed", "R3", 600, 1000)
+    output = figure3(changed, tmp_path)
+    assert all(p.stat().st_size > 1000 for p in output.paths)
+    assert len(saved[0].axes) == 4
 
 
 def test_series_raises_for_an_absent_recording(runs):

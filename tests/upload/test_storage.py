@@ -1,4 +1,5 @@
 import csv
+import shutil
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -88,6 +89,21 @@ def test_absent_format_has_no_row(root: Path) -> None:
     formats = {r["format"] for r in storage.storage_rows(root, "R9")}
     assert "edf" not in formats
     assert "tszarr" in formats
+
+
+def test_recording_with_only_tszarr_has_rows_for_that_format(
+    root: Path,
+) -> None:
+    for file_format in schemas.FORMATS:
+        if file_format != "tszarr":
+            path = root / schemas.relative_path("R9", file_format)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+    rows = storage.storage_rows(root, "R9")
+    assert {r["format"] for r in rows} == {"tszarr"}
+    assert [r["member"] for r in rows][1:] == list(storage.MEMBERS)
 
 
 def test_missing_recording_raises(tmp_path: Path) -> None:

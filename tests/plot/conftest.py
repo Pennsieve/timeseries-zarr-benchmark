@@ -62,7 +62,7 @@ def overhead_base(store: str) -> float:
 
 def write_format_benchmark(path: Path) -> None:
     with CsvWriter(path, FORMAT_READS, BUDGET_HEADER) as writer:
-        for recording in ("R3", "R1"):
+        for recording in ("R3-1h", "R1-1h"):
             for store in STORES:
                 for kind in READ_KINDS:
                     for window in WINDOWS:
@@ -89,7 +89,7 @@ def write_format_benchmark(path: Path) -> None:
             for repeat in range(REPEATS):
                 writer.write(
                     {
-                        "recording": "R3",
+                        "recording": "R3-1h",
                         "store": store,
                         "format": "overhead",
                         "read_kind": "all",
@@ -144,6 +144,7 @@ def run_row(
         "generator_link_max": 0.1,
         "repeated": "true" if repeated else "false",
         "link_limited": "true" if link_limited else "false",
+        "not_run": "false",
     }
 
 
@@ -456,3 +457,35 @@ def ring_points(axes) -> list[tuple[float, float]]:
         if line.get_marker() == "o" and line.get_markerfacecolor() == "none"
         for point in zip(line.get_xdata(), line.get_ydata(), strict=True)
     ]
+
+
+NOT_RUN_BLANKED = (
+    "generators",
+    "users_per_generator",
+    "requests",
+    "failures",
+    "failure_rate",
+    "requests_per_second",
+    "median_s",
+    "p5_s",
+    "p95_s",
+    "median_bytes",
+    "raw_bytes",
+    "server_cpu_max",
+    "generator_link_max",
+)
+
+
+def mark_not_run(frame, method: str, recording: str, window: int, users: int):
+    """Return a copy of a runs frame with one run turned into a not-run row."""
+    changed = frame.copy()
+    mask = (
+        (changed["method"] == method)
+        & (changed["recording"] == recording)
+        & (changed["window_s"] == window)
+        & (changed["users"] == users)
+        & (changed["repeated"] == "false")
+    )
+    changed.loc[mask, "not_run"] = "true"
+    changed.loc[mask, list(NOT_RUN_BLANKED)] = float("nan")
+    return changed

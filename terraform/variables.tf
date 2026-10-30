@@ -106,13 +106,13 @@ variable "load_generator_count" {
 variable "file_server_data_gb" {
   description = "Size of the data volume of the file server in GiB. It holds every format of every recording."
   type        = number
-  default     = 2000
+  default     = 300
 }
 
 variable "client_data_gb" {
   description = "Size of the data volume of the benchmark client in GiB. It holds the local copy."
   type        = number
-  default     = 2000
+  default     = 600
 }
 
 variable "data_volume_iops" {

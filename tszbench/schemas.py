@@ -122,6 +122,7 @@ RESAMPLING_RUNS = (
     "generator_link_max",
     "repeated",
     "link_limited",
+    "not_run",
 )
 """One row per run, warm-up requests left out. `raw_bytes` is the float32 size
 of every channel under the window. `server_cpu_max` is the peak of the
@@ -129,7 +130,9 @@ per-second CPU use in percent. `generator_link_max` is the peak per-second
 receive rate of any load generator as a fraction of its link. `repeated` is
 true for a run repeated with half the users per generator. `link_limited` is
 true for a run whose peak receive rate passed half the generator link and that
-no repeat replaced."""
+no repeat replaced. `not_run` is true for a run that the orchestrator skipped
+because a smaller user count of the same method, recording, and window failed.
+Such a row holds the method, recording, window, and users, and no statistics."""
 
 MONITOR = (
     "run",
@@ -228,6 +231,10 @@ LINK_LIMITED_FILE = "link-limited"
 """Empty file inside a run directory, written when the peak receive rate of a
 generator passed half its link and no repeat with fewer users per generator
 could run."""
+
+NOT_RUN_FILE = "not-run"
+"""File inside the directory of a run that the orchestrator skipped. It holds
+the name of the run with fewer users whose median request failed."""
 
 
 def generation_file(recording_id: str) -> str:

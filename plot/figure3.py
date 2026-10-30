@@ -17,6 +17,7 @@ from plot.data import (
     link_limited_sentence,
     select_runs,
     window_label,
+    without_not_run,
 )
 from plot.style import (
     FAILED_MARKER,
@@ -36,12 +37,13 @@ def figure3_series(runs: Any, recording: str) -> Any:
     """Return the runs of one recording that Figure 3 draws.
 
     One row per method, window, and user count, chosen by
-    `plot.data.select_runs` and sorted by window, method, and users.
+    `plot.data.select_runs` and sorted by window, method, and users. A run
+    that was not run is left out.
 
     Raises:
         NoDataError: The recording has no the resampling benchmark run.
     """
-    chosen = select_runs(runs)
+    chosen = without_not_run(select_runs(runs))
     chosen = chosen[chosen["recording"] == recording]
     if chosen.empty:
         raise NoDataError(f"no the resampling benchmark runs of {recording}")

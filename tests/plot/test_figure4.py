@@ -7,6 +7,7 @@ from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
 from tests.plot.conftest import (
     FAILED_REQUEST_SECONDS,
     mark_link_limited,
+    mark_not_run,
     ring_points,
 )
 
@@ -22,6 +23,13 @@ def test_series_is_sorted_by_raw_bytes_within_a_line(runs):
     series = figure4_series(runs)
     line = series[(series["method"] == "server") & (series["users"] == 1)]
     assert list(line["raw_bytes"]) == sorted(line["raw_bytes"])
+
+
+def test_series_leaves_out_a_run_that_was_not_run(runs):
+    changed = mark_not_run(runs, "server", "R3", 600, 100)
+    series = figure4_series(changed)
+    assert len(series) == 2 * 2 * 2 * 2 - 1
+    assert not series["not_run"].eq("true").any()
 
 
 def test_series_raises_without_matching_runs(runs):
@@ -127,3 +135,15 @@ def test_figure4_draws_no_ring_without_a_link_limited_run(
 def test_figure4_caption_counts_the_link_limited_runs(runs, tmp_path):
     changed = mark_link_limited(runs, "server", "R3", 600, 100)
     assert "A ring marks one run" in figure4(changed, tmp_path).caption
+
+
+def test_figure4_draws_what_exists_when_a_recording_has_one_user_count(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    changed = runs[~((runs["recording"] == "R1") & (runs["users"] == 100))]
+    output = figure4(changed, tmp_path)
+    assert all(p.stat().st_size > 1000 for p in output.paths)
+    (axis,) = saved[0].axes
+    assert axis.get_lines()
+    assert "for R1 and R3" in output.caption
