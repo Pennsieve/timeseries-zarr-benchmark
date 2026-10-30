@@ -4,12 +4,12 @@ from plot import figure1 as module
 from plot.data import NoDataError
 from plot.figure1 import figure1, figure1_rows
 from tests.plot.conftest import trim_reads
-from tszbench.schemas import FORMATS
+from tszbench.schemas import READ_FORMATS
 
 
 def test_rows_hold_only_the_10_s_all_channel_reads(format_benchmark):
     rows = figure1_rows(format_benchmark)
-    format_rows = rows[rows["format"].isin(FORMATS)]
+    format_rows = rows[rows["format"].isin(READ_FORMATS)]
     # 2 recordings x 3 stores x 6 formats x 21 reads
     assert len(format_rows) == 2 * 3 * 6 * 21
     assert "zarr-direct" not in set(rows["format"])

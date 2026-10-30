@@ -28,7 +28,7 @@ from plot.style import (
     new_figure,
     save_figure,
 )
-from tszbench.schemas import FORMATS, READ_KINDS, STORES
+from tszbench.schemas import READ_FORMATS, READ_KINDS, STORES
 
 PANEL_WIDTH = 3.2
 PANEL_HEIGHT = 2.6
@@ -45,7 +45,7 @@ def figure2_series(format_benchmark: Any, recording: str) -> Any:
     """
     rows = format_benchmark[
         (format_benchmark["recording"] == recording)
-        & format_benchmark["format"].isin(FORMATS)
+        & format_benchmark["format"].isin(READ_FORMATS)
     ]
     if rows.empty:
         raise NoDataError(f"no reads of {recording} in format_benchmark")
@@ -71,7 +71,7 @@ def overhead_floor(format_benchmark: Any, recording: str) -> dict[str, float]:
 
 def _draw_formats(axis: Any, panel: Any, column: str) -> None:
     """Draw one line per format of a panel, from the column of `panel`."""
-    for name in FORMATS:
+    for name in READ_FORMATS:
         line = panel[panel["format"] == name].sort_values("window_s")
         if line.empty:
             continue
@@ -166,7 +166,7 @@ def figure2(
     for axis in axes[-1]:
         axis.set_xlabel("window length")
     legend_names = [
-        name for name in FORMATS if name in set(series["format"])
+        name for name in READ_FORMATS if name in set(series["format"])
     ] + ([OVERHEAD] if floor else [])
     handles = [
         Line2D(
@@ -206,7 +206,7 @@ def _drawn_reads(format_benchmark: Any, recording: str) -> Any:
         [
             format_benchmark[
                 (format_benchmark["recording"] == recording)
-                & format_benchmark["format"].isin(FORMATS)
+                & format_benchmark["format"].isin(READ_FORMATS)
             ],
             overhead_rows(format_benchmark, recording),
         ]

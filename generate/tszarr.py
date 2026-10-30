@@ -95,25 +95,35 @@ class SynthesizedSource:
 
 
 def write_tszarr(
-    spec: RecordingSpec, output_path: Path, workers: int = 1
+    spec: RecordingSpec,
+    output_path: Path,
+    workers: int = 1,
+    *,
+    raw_only: bool = False,
 ) -> None:
     """Write spec as a TS-Zarr bundle at output_path.
 
     The bundle holds raw, minmax, mean, var, and count at every level, with
     the default inner chunk, shard size, and level threshold of `WriteOpts`.
-    Time counts from `START_TIME`.
+    With raw_only the bundle holds raw only. Time counts from `START_TIME`.
 
     Args:
         spec: The recording to write.
         output_path: Directory of the bundle. A bundle already there is
             replaced.
         workers: Number of threads that generate channels at once.
+        raw_only: Write the raw samples and no level.
     """
+    opts = (
+        WriteOpts(zstd_level=ZSTD_LEVEL, max_levels=0)
+        if raw_only
+        else WriteOpts(zstd_level=ZSTD_LEVEL, write_var=True)
+    )
     write_bundle(
         [SynthesizedSource(spec, workers)],
         [],
         output_path=output_path,
-        opts=WriteOpts(zstd_level=ZSTD_LEVEL, write_var=True),
+        opts=opts,
         recording=RecordingMeta(
             session_start_time=START_TIME, reference_time=START_TIME
         ),

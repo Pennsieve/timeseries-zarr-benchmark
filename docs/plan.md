@@ -65,6 +65,11 @@ Files written per recording:
   `WriteOpts(zstd_level=3, write_var=True)`. The bundle holds raw, minmax, mean, var, and
   count at every level. Inner chunks hold 8192 elements, shards 16 MiB, and the level
   threshold is 1024 bins. The root `zarr.json` holds the consolidated metadata.
+- TS-Zarr, raw only: one bundle written by `write_bundle` with
+  `WriteOpts(zstd_level=3, max_levels=0)`. It holds the raw samples and no level. The
+  1 h cuts and R4 have it. The format benchmark does not read it, and the file server
+  does not copy it. It gives a like-for-like row for storage, generation seconds, and
+  upload rate against EDF and NWB.
 
 Every chunked file uses Zstd level 3 (through hdf5plugin for HDF5). EDF has no
 compression.
@@ -75,18 +80,18 @@ shape the noise. Their state carries across blocks, so no seam appears at a bloc
 and no channel is held in memory. The writer runs in one process and writes to local
 disk. Each bundle is therefore written locally and then uploaded. Each recording runs as
 its own process, and R3-1h runs before R3. Methods quotes the generation seconds of
-R3-1h and R4 per format, and of R3 in TS-Zarr.
+R3-1h and R4 per format, including the raw-only bundle, and of R3 in TS-Zarr.
 
 ## Software
 
 Each format is read and written with its standard library. NWB on HDF5 uses pynwb and
-h5py. NWB on Zarr uses pynwb and hdmf-zarr. TS-Zarr uses timeseries-zarr 0.1.0a10, the
+h5py. NWB on Zarr uses pynwb and hdmf-zarr. TS-Zarr uses timeseries-zarr 0.1.0a11, the
 Python reference reader and writer, for both benchmarks. EDF is the one exception. No EDF
 library reads a window by byte range: pyedflib and MNE take a local path, and edfio and
 edfplus load the whole signal. A small EDF range reader is therefore part of the package.
 
 No resampling code is written for the benchmark. Both methods of the resampling benchmark
-reduce to pixel columns with `NaNMinMaxDownsampler` from tsdownsample 0.1.5.1. The
+reduce to pixel columns with `MinMaxDownsampler` from tsdownsample 0.1.5.1. The
 resampling server is FastAPI under one uvicorn worker. Each request fans out over a
 process pool with one process per vCPU. Each pool process holds its own counting
 filesystem and its own open bundles.
@@ -95,7 +100,7 @@ One Python 3.12 environment holds every library, because hdmf-zarr 0.14 runs on
 zarr 3.4. It holds zarr, timeseries-zarr, tsdownsample, pynwb, h5py with hdf5plugin,
 hdmf-zarr, fsspec, and s3fs. Every CSV header prints the version of each library. The
 paper's Methods names the reader once, as the Python reference reader (timeseries-zarr
-0.1.0a10), and cites tsdownsample with its version.
+0.1.0a11), and cites tsdownsample with its version.
 
 ## Machines and stores
 
@@ -192,14 +197,15 @@ Memory stays near one group per pool process. There is no cache. Every request r
 The server records read seconds and reduce seconds apart for each request. When a client
 disconnects, the server cancels the tasks of its request that have not started.
 
-`NaNMinMaxDownsampler` returns two sample indices per column, in sample order. The server
-takes the smaller value as the minimum and the larger as the maximum. A column that holds
-a gap comes back NaN, which is what the level members hold. The plain `MinMaxDownsampler`
-skips NaN and would draw through a gap. When a group holds the same whole number of
-samples for every column, each tsdownsample column holds exactly those samples. The
-generator plants NaN gaps only, because tsdownsample does not specify how it treats
-infinities. tsdownsample runs on one thread per call. The pool processes already fill the
-instance.
+`MinMaxDownsampler` returns two sample indices per column, in sample order. It skips NaN
+samples. The server takes the smaller value as the minimum and the larger as the maximum.
+A column that holds part of a gap returns the minmax of its other samples, and a column
+inside a gap returns NaN. The level members hold their bins the same way: a bin holds the
+statistics of its finite samples and is NaN only when it holds none. When a group holds
+the same whole number of samples for every column, each tsdownsample column holds exactly
+those samples. The generator plants NaN gaps only, because tsdownsample does not specify
+how it treats infinities. tsdownsample runs on one thread per call. The pool processes
+already fill the instance.
 
 The precomputed read runs on the load generator itself, with the reader. `level_for` with
 `bins=2000` picks the coarsest level that holds at least 2000 bins in the window. At every
@@ -247,8 +253,10 @@ that method, recording, and window are not run, and the results mark them not ru
 ## Storage and cost
 
 After generation, one table reports per recording and format the bytes at rest, the
-object count, and for TS-Zarr the bytes per member. The multipliers of the paper (raw plus
-minmax at 5N/3, each further member at N/3) then stand beside measured values. One
+object count, and for TS-Zarr the bytes per member. The raw-only TS-Zarr bundle has one row
+for the whole file. It is the raw-only comparison with EDF and NWB, which hold raw samples
+only. The multipliers of the paper (raw plus minmax at 5N/3, each further member at N/3)
+then stand beside measured values. One
 sentence in Methods gives the median upload rate of each format with `aws s3 cp` at
 default settings, as the OME paper did.
 
@@ -283,6 +291,7 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
   how each method's time depends on the raw bytes under the window.
 - Table 1. The recordings table above.
 - Table 2. Storage: bytes at rest, object count, and multiplier per recording and format.
+  The raw-only TS-Zarr row is the raw-only comparison with EDF and NWB.
 - Table 3. Median server seconds divided by median precomputed-read seconds for each
   window and user count on R3. A cell reads "fail" where the server run had failures and
   "fail (precomputed)" where only the precomputed run had failures. A cell reads "not

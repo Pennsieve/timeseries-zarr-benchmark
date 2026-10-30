@@ -118,9 +118,10 @@ done
 ## Generate the recordings
 
 The client writes the recordings to its data volume at `/data`. The format
-benchmark reads the 1 h cuts and R4, so they are written in every format. The
-resampling benchmark reads R1, R2, and R3 at full length, which are written in
-TS-Zarr only. The plan generates R3-1h before R3. Run one recording per process:
+benchmark reads the 1 h cuts and R4, so they are written in every format. They are
+also written as a raw-only TS-Zarr bundle for the storage table. The resampling
+benchmark reads R1, R2, and R3 at full length, which are written in TS-Zarr only.
+The plan generates R3-1h before R3. Run one recording per process:
 
 ```bash
 for recording in R1-1h R2-1h R3-1h R4; do
@@ -134,7 +135,9 @@ done
 ```
 
 `--workers` sets the threads that synthesize channels at once. The client has
-32 vCPU. Each recording writes `results/generation-<recording>.csv`.
+32 vCPU. Each recording writes `results/generation-<recording>.csv`. The option
+`--formats` adds a format to a recording already written, and the generation CSV
+keeps the rows of its other formats.
 
 ## Upload to S3
 
@@ -151,7 +154,8 @@ done
 ## Pull to the file server
 
 The file server copies the recordings of the format benchmark and the 1-byte
-object to its data volume, which nginx serves:
+object to its data volume, which nginx serves. It copies every format but the
+raw-only TS-Zarr bundle:
 
 ```bash
 ssh $FILE_SERVER "cd timeseries-zarr-benchmark && .venv/bin/python -m upload pull \
@@ -166,7 +170,8 @@ ssh $FILE_SERVER "cd timeseries-zarr-benchmark && .venv/bin/python -m upload pul
     --recordings R1-1h,R2-1h,R3-1h,R4,R1,R2,R3
 ```
 
-This writes `results/storage.csv`, which Table 2 reads. Measuring a recording
+This writes `results/storage.csv`, which Table 2 reads. Table 2 has a row for the
+raw-only TS-Zarr bundle. Measuring a recording
 again replaces its rows and keeps the rows of the others.
 
 ## Run the format benchmark

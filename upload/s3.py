@@ -76,13 +76,23 @@ def sync_command(
     uri: str,
     local: Path,
     *,
+    exclude: Sequence[str] = (),
     region: str | None = None,
     endpoint_url: str | None = None,
 ) -> list[str]:
-    """Return the `aws s3 sync` command that downloads uri to local."""
-    return _with_options(
-        ["aws", "s3", "sync", uri, str(local)], region, endpoint_url
-    )
+    """Return the `aws s3 sync` command that downloads uri to local.
+
+    Args:
+        uri: Prefix to download.
+        local: Directory that receives the objects.
+        exclude: Patterns of the objects to skip, relative to uri.
+        region: AWS region, when set.
+        endpoint_url: Address of an S3-compatible server, when set.
+    """
+    command = ["aws", "s3", "sync", uri, str(local)]
+    for pattern in exclude:
+        command += ["--exclude", pattern]
+    return _with_options(command, region, endpoint_url)
 
 
 def upload_recording(
@@ -193,9 +203,15 @@ def pull(
 
     Without recordings, one sync copies everything below prefix. With
     recordings, one sync copies each `<recording>/` prefix, and one more copies
-    the directory of `schemas.ONE_BYTE_OBJECT`.
+    the directory of `schemas.ONE_BYTE_OBJECT`. Every sync skips the formats of
+    `schemas.FORMATS` that are not in `schemas.READ_FORMATS`.
     """
     root.mkdir(parents=True, exist_ok=True)
+    exclude = [
+        f"*{schemas.FILE_NAMES[name]}/*"
+        for name in schemas.FORMATS
+        if name not in schemas.READ_FORMATS
+    ]
     if recordings is None:
         paths = [""]
     else:
@@ -209,6 +225,7 @@ def pull(
             sync_command(
                 source,
                 root / path,
+                exclude=exclude,
                 region=region,
                 endpoint_url=endpoint_url,
             )

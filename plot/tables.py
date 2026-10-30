@@ -310,7 +310,7 @@ def table2(storage: Any) -> Table:
             "multiplier is bytes divided by the raw float32 bytes of the "
             "recording. The paper column gives the multiplier of the paper "
             "for the raw and minmax members together and for each further "
-            "member."
+            "member. The raw-only row is a TS-Zarr bundle with no level."
         ),
     )
 

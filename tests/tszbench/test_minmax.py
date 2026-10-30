@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -34,13 +36,48 @@ def test_bins_reduce_their_minimum_and_maximum_separately():
     )
 
 
-def test_a_column_with_nan_is_nan_and_its_neighbors_are_not():
+def test_a_column_with_a_nan_entry_holds_the_minmax_of_the_others():
     columns, per_column = 10, 5
     values = np.arange(columns * per_column, dtype=np.float32)
-    values[12] = np.nan
+    values[10] = np.nan
+    values[14] = np.nan
+    result = column_minmax(values, values, columns)
+    np.testing.assert_array_equal(result[2], [11, 13])
+    assert not np.isnan(result).any()
+
+
+def test_a_column_of_nan_entries_is_nan_and_its_neighbors_are_not():
+    columns, per_column = 10, 5
+    values = np.arange(columns * per_column, dtype=np.float32)
+    values[10:15] = np.nan
     result = column_minmax(values, values, columns)
     assert np.isnan(result[2]).all()
     assert not np.isnan(np.delete(result, 2, axis=0)).any()
+
+
+def test_a_column_of_two_entries_skips_its_nan_entry():
+    values = np.arange(40, dtype=np.float32)
+    values[6] = np.nan
+    result = column_minmax(values, values, 20)
+    np.testing.assert_array_equal(result[3], [7, 7])
+
+
+@pytest.mark.parametrize("per_column", [2, 3, 10, 600])
+def test_columns_with_nan_runs_match_nanmin_and_nanmax(per_column):
+    columns = 48
+    rng = np.random.default_rng(per_column)
+    values = rng.standard_normal(columns * per_column).astype(np.float32)
+    for start in rng.integers(0, values.size, 6):
+        values[start : start + int(rng.integers(1, 3 * per_column))] = np.nan
+    per = values.reshape(columns, per_column)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        expected = np.stack(
+            [np.nanmin(per, axis=1), np.nanmax(per, axis=1)], axis=-1
+        )
+    np.testing.assert_array_equal(
+        column_minmax(values, values, columns), expected
+    )
 
 
 def test_fewer_than_two_entries_per_column_returns_every_entry():

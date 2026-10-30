@@ -9,6 +9,7 @@ from tszbench.csvmeta import read_header
 from upload import s3, storage
 
 BUCKET = "bench-bucket"
+EXCLUDE_RAW_ONLY = "*tszarr-raw.zarr/*"
 
 
 class FakeRunner:
@@ -184,8 +185,11 @@ def test_pull_syncs_the_bucket_to_the_root(tmp_path: Path) -> None:
     runner = FakeRunner()
     s3.pull(tmp_path / "data", BUCKET, "run1", run=runner)
     assert runner.commands == [
-        ["aws", "s3", "sync", f"s3://{BUCKET}/run1/", str(tmp_path / "data")]
-    ]
+        [
+            "aws", "s3", "sync", f"s3://{BUCKET}/run1/", str(tmp_path / "data"),
+            "--exclude", EXCLUDE_RAW_ONLY,
+        ]
+    ]  # fmt: skip
     assert (tmp_path / "data").is_dir()
 
 
@@ -196,9 +200,25 @@ def test_pull_of_recordings_syncs_each_prefix_and_the_one_byte_directory(
     root = tmp_path / "data"
     s3.pull(root, BUCKET, "run1", recordings=["R1-1h", "R4"], run=runner)
     assert runner.commands == [
-        ["aws", "s3", "sync", f"s3://{BUCKET}/run1/R1-1h/", str(root / "R1-1h")],
-        ["aws", "s3", "sync", f"s3://{BUCKET}/run1/R4/", str(root / "R4")],
-        ["aws", "s3", "sync", f"s3://{BUCKET}/run1/overhead/", str(root / "overhead")],
+        [
+            "aws", "s3", "sync", f"s3://{BUCKET}/run1/{name}/", str(root / name),
+            "--exclude", EXCLUDE_RAW_ONLY,
+        ]
+        for name in ("R1-1h", "R4", "overhead")
+    ]  # fmt: skip
+
+
+def test_sync_command_places_each_exclude_before_the_options() -> None:
+    command = s3.sync_command(
+        "s3://b/",
+        Path("/d"),
+        exclude=["a/*", "b/*"],
+        region="us-east-1",
+    )
+    assert command == [
+        "aws", "s3", "sync", "s3://b/", "/d",
+        "--exclude", "a/*", "--exclude", "b/*",
+        "--region", "us-east-1",
     ]  # fmt: skip
 
 

@@ -11,8 +11,8 @@ from tszbench.schemas import (
     FORMAT_OPENS,
     FORMAT_READS,
     FORMAT_ROWS,
-    FORMATS,
     GENERATION,
+    READ_FORMATS,
     READ_KINDS,
     RESAMPLING_REQUESTS,
     RESAMPLING_RUNS,
@@ -66,7 +66,7 @@ def write_format_benchmark(path: Path) -> None:
             for store in STORES:
                 for kind in READ_KINDS:
                     for window in WINDOWS:
-                        for name in (*FORMATS, "zarr-direct"):
+                        for name in (*READ_FORMATS, "zarr-direct"):
                             base = base_seconds(name, store, kind, window)
                             for repeat in range(REPEATS):
                                 writer.write(
@@ -344,6 +344,7 @@ def write_storage(path: Path) -> None:
         ("tszarr", "var", raw // 4, 40),
         ("tszarr", "count", raw // 8, 30),
         ("tszarr", "metadata", 1000, 3),
+        ("tszarr-raw", "", raw + 500, 90),
     ]
     with CsvWriter(path, STORAGE, HEADER) as writer:
         for name, member, size, objects in rows:

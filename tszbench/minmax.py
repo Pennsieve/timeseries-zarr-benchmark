@@ -2,12 +2,12 @@
 
 import numpy as np
 import numpy.typing as npt
-from tsdownsample import NaNMinMaxDownsampler
+from tsdownsample import MinMaxDownsampler
 
 COLUMNS = 2000
 """Pixel columns of every resampling benchmark response."""
 
-_DOWNSAMPLER = NaNMinMaxDownsampler()
+_DOWNSAMPLER = MinMaxDownsampler()
 
 
 def column_minmax(
@@ -20,8 +20,8 @@ def column_minmax(
     An entry is a raw sample or a level bin. `minimum` and `maximum` hold the
     lowest and highest value of each entry, so a raw read passes its samples as
     both. tsdownsample splits the entries into `columns` columns. Row `i` holds
-    the minimum and the maximum of column `i`, and a column that holds a NaN
-    entry is NaN in both.
+    the minimum and the maximum of the entries of column `i` that are not NaN.
+    A column whose entries are all NaN is NaN in both.
 
     tsdownsample returns every entry when the entries number fewer than two per
     column. The result then holds one row per entry, the entry's own minimum
@@ -54,7 +54,10 @@ def column_minmax(
         if same
         else _DOWNSAMPLER.downsample(maximum, n_out=2 * columns)
     )
-    # The pair of each column is its argmin and argmax in sample order.
-    low = minimum[low_index].reshape(columns, 2).min(axis=1)
-    high = maximum[high_index].reshape(columns, 2).max(axis=1)
+    # The pair of each column is its argmin and argmax in sample order. A
+    # column of two entries returns both, and fmin and fmax skip a NaN one.
+    low_pair = minimum[low_index].reshape(columns, 2)
+    high_pair = maximum[high_index].reshape(columns, 2)
+    low = np.fmin(low_pair[:, 0], low_pair[:, 1])
+    high = np.fmax(high_pair[:, 0], high_pair[:, 1])
     return np.stack([low, high], axis=-1).astype(np.float32)

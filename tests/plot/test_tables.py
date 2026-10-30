@@ -58,7 +58,9 @@ def test_table2_paper_multiplier_is_one_third_for_further_members(storage):
 
 def test_table2_orders_formats_then_members(storage):
     frame = table2(storage).frame
-    assert list(frame["format"]) == ["edf", "nwb-hdf5-time"] + ["tszarr"] * 8
+    assert list(frame["format"]) == (
+        ["edf", "nwb-hdf5-time"] + ["tszarr"] * 8 + ["tszarr-raw"]
+    )
     assert list(frame["member"])[2:] == [
         "",
         "raw",
@@ -68,7 +70,15 @@ def test_table2_orders_formats_then_members(storage):
         "var",
         "count",
         "metadata",
+        "",
     ]
+
+
+def test_table2_shows_the_raw_only_bundle_with_its_label(storage):
+    table = table2(storage)
+    row = next(r for r in table.rows if r[1] == "TS-Zarr, raw only")
+    assert row[0] == "R3"
+    assert row[2] == ""
 
 
 def test_table2_keeps_the_last_of_a_repeated_row(storage):
@@ -217,7 +227,7 @@ def test_write_table_writes_csv_and_tex(storage, tmp_path):
     output = write_table(table2(storage), tmp_path)
     assert [p.name for p in output.paths] == ["table2.csv", "table2.tex"]
     csv = pd.read_csv(output.paths[0])
-    assert len(csv) == 10
+    assert len(csv) == 11
     tex = output.paths[1].read_text()
     assert tex.startswith("\\begin{tabular}{lllrrrr}\n\\toprule\n")
     assert "\\midrule" in tex

@@ -30,7 +30,7 @@ from plot.style import (
     new_figure,
     save_figure,
 )
-from tszbench.schemas import FORMATS, STORES
+from tszbench.schemas import READ_FORMATS, STORES
 
 WINDOW_S = 10
 READ_KIND = "all"
@@ -60,7 +60,7 @@ def figure1_rows(format_benchmark: Any) -> Any:
         NoDataError: No format has a read at the 10 s all-channel window.
     """
     selected = format_benchmark[
-        format_benchmark["format"].isin(FORMATS)
+        format_benchmark["format"].isin(READ_FORMATS)
         & (format_benchmark["window_s"] == WINDOW_S)
         & (format_benchmark["read_kind"] == READ_KIND)
     ]
@@ -131,7 +131,7 @@ def _rain(axis: Any, values: Any, center: float, color: str, rng: Any) -> None:
 def figure1(format_benchmark: Any, out_dir: Path, stem: str = "fig1") -> Output:
     """Write Figure 1 as `<stem>.pdf` and `<stem>.png`.
 
-    One panel per recording, one row per format in `FORMATS` order and then
+    One panel per recording, one row per format in `READ_FORMATS` order and then
     the overhead row, one color per store, on a log axis of seconds. Each store
     in a row draws a half violin of a Gaussian kernel density estimate of
     log10 seconds, a box of the quartiles with the median, and one jittered
@@ -151,7 +151,9 @@ def figure1(format_benchmark: Any, out_dir: Path, stem: str = "fig1") -> Output:
     rows = figure1_rows(format_benchmark)
     recordings = recording_order(rows["recording"])
     labels = [
-        name for name in (*FORMATS, OVERHEAD) if name in set(rows["format"])
+        name
+        for name in (*READ_FORMATS, OVERHEAD)
+        if name in set(rows["format"])
     ]
     stores = [name for name in STORES if name in set(rows["store"])]
     figure = new_figure(

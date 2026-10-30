@@ -33,14 +33,14 @@ class _Channel:
         return rng.normal(0.0, 20.0, SAMPLES).astype(np.float32)[start:stop]
 
 
-def write_small_bundle(path: Path) -> None:
-    """Write a bundle of two channels with levels, mean, variance, and count."""
-    write_bundle(
-        [_Channel(0), _Channel(1)],
-        [],
-        output_path=path,
-        opts=WriteOpts(min_bins=4, inner_len=512, write_var=True),
+def write_small_bundle(path: Path, *, raw_only: bool = False) -> None:
+    """Write a bundle of two channels, with levels unless raw_only is set."""
+    opts = (
+        WriteOpts(max_levels=0, inner_len=512)
+        if raw_only
+        else WriteOpts(min_bins=4, inner_len=512, write_var=True)
     )
+    write_bundle([_Channel(0), _Channel(1)], [], output_path=path, opts=opts)
 
 
 @pytest.fixture
@@ -50,8 +50,8 @@ def root(tmp_path: Path) -> Path:
     recording.mkdir(parents=True)
     for file_format in schemas.FORMATS:
         path = recording / schemas.FILE_NAMES[file_format]
-        if file_format == "tszarr":
-            write_small_bundle(path)
+        if file_format in ("tszarr", "tszarr-raw"):
+            write_small_bundle(path, raw_only=file_format == "tszarr-raw")
         elif "zarr" in file_format:
             (path / "group").mkdir(parents=True)
             (path / "zarr.json").write_bytes(b"x" * 10)

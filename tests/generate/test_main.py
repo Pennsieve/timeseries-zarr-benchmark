@@ -140,7 +140,29 @@ def test_the_formats_option_limits_the_files_in_the_order_given(
     assert written == {schemas.FILE_NAMES["tszarr"], schemas.FILE_NAMES["edf"]}
 
 
-def test_a_recording_without_edf_writes_the_other_five_by_default(
+def test_a_run_of_one_format_keeps_the_rows_of_the_others(
+    tiny: RecordingSpec, tmp_path: Path
+):
+    root, results = tmp_path / "files", tmp_path / "results"
+    run(root, results, "--formats", "edf,tszarr")
+    _, first = read_rows(results / "generation-tiny.csv")
+    run(root, results, "--formats", "tszarr-raw")
+    _, rows = read_rows(results / "generation-tiny.csv")
+    assert [row["format"] for row in rows] == ["edf", "tszarr", "tszarr-raw"]
+    assert rows[:2] == first
+
+
+def test_a_run_replaces_the_row_of_a_format_it_writes_again(
+    tiny: RecordingSpec, tmp_path: Path
+):
+    root, results = tmp_path / "files", tmp_path / "results"
+    run(root, results, "--formats", "edf,tszarr")
+    run(root, results, "--formats", "edf", "--overwrite")
+    _, rows = read_rows(results / "generation-tiny.csv")
+    assert [row["format"] for row in rows] == ["tszarr", "edf"]
+
+
+def test_a_recording_without_edf_writes_every_other_format_by_default(
     tmp_path: Path, tiny: RecordingSpec
 ):
     assert formats_of(replace(SPEC, edf_record_s=None)) == schemas.FORMATS[1:]

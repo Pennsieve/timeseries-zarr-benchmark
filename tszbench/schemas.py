@@ -11,10 +11,16 @@ FORMATS = (
     "nwb-zarr-time",
     "nwb-zarr-channel",
     "tszarr",
+    "tszarr-raw",
 )
-"""Files written per recording. `-time` chunks time-major, `-channel` per channel."""
+"""Files written per recording. `-time` chunks time-major, `-channel` per channel.
+`tszarr-raw` is a TS-Zarr bundle with raw samples and no levels. Only the 1 h cuts
+and R4 have it, and it exists for the storage comparison."""
 
-FORMAT_ROWS = (*FORMATS, "zarr-direct", "overhead")
+READ_FORMATS = tuple(name for name in FORMATS if name != "tszarr-raw")
+"""Formats the format benchmark reads."""
+
+FORMAT_ROWS = (*READ_FORMATS, "zarr-direct", "overhead")
 """Values of `format` in the format benchmark. `zarr-direct` reads the TS-Zarr raw arrays
 with zarr-python and no reader. `overhead` reads a 1-byte object."""
 
@@ -36,8 +42,9 @@ UPLOAD = (
 """One row per file uploaded by `upload` with `aws s3 cp`."""
 
 STORAGE = ("recording", "format", "member", "bytes", "objects")
-"""Bytes at rest. `member` is empty for a whole file. A TS-Zarr bundle also has
-one row per member: `raw`, `minmax`, `mean`, `var`, `count`, and `metadata`."""
+"""Bytes at rest. `member` is empty for a whole file. A `tszarr` bundle also has
+one row per member: `raw`, `minmax`, `mean`, `var`, `count`, and `metadata`.
+`tszarr-raw` has a whole-file row only."""
 
 FORMAT_READS = (
     "recording",
@@ -164,6 +171,7 @@ FILE_NAMES = {
     "nwb-zarr-time": "nwb-zarr-time.nwb.zarr",
     "nwb-zarr-channel": "nwb-zarr-channel.nwb.zarr",
     "tszarr": "tszarr.zarr",
+    "tszarr-raw": "tszarr-raw.zarr",
 }
 """Name of each file inside its recording directory, `<root>/<recording id>/`."""
 

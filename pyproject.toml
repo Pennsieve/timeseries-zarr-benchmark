@@ -14,7 +14,7 @@ dependencies = [
     "scipy==1.18.1",
     "zarr==3.4.1",
     "numcodecs==0.17.1",
-    "timeseries-zarr==0.1.0a10",
+    "timeseries-zarr==0.1.0a11",
     "tsdownsample==0.1.5.1",
     "pynwb==4.2.0",
     "hdmf==6.2.0",

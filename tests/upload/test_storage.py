@@ -84,6 +84,16 @@ def test_rows_follow_schema_format_order(root: Path) -> None:
     assert whole == list(schemas.FORMATS)
 
 
+def test_the_raw_only_bundle_has_one_whole_file_row_and_no_member_rows(
+    root: Path,
+) -> None:
+    rows = storage.storage_rows(root, "R9")
+    raw_only = [r for r in rows if r["format"] == "tszarr-raw"]
+    assert [r["member"] for r in raw_only] == [""]
+    size, objects = storage.measure(root / "R9" / "tszarr-raw.zarr")
+    assert (raw_only[0]["bytes"], raw_only[0]["objects"]) == (size, objects)
+
+
 def test_absent_format_has_no_row(root: Path) -> None:
     (root / "R9" / schemas.FILE_NAMES["edf"]).unlink()
     formats = {r["format"] for r in storage.storage_rows(root, "R9")}

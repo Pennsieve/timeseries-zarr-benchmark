@@ -59,7 +59,8 @@ suite on AWS.
   R4, with windows of 1 second to 10 minutes. Every stage takes these names.
 - A store root is a directory or an S3 prefix. It holds `<recording>/<file>`
   for each format and the 1-byte object `overhead/one-byte`. The file names are
-  in `tszbench/schemas.py`.
+  in `tszbench/schemas.py`. The raw-only TS-Zarr bundle `tszarr-raw.zarr` is
+  written for the storage table and is not read by the format benchmark.
 - Window bounds are integer microseconds from sample 0. Times in the CSVs are
   seconds unless the column name ends in `_us`. Sizes are bytes.
 - Every CSV opens with `# key: value` lines describing the date, commit,

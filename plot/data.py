@@ -18,12 +18,12 @@ from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
 from resampling_benchmark.summarize import FAILED_REQUEST_SECONDS_KEY
 from tszbench.csvmeta import read_header
 from tszbench.recordings import RECORDINGS
-from tszbench.schemas import FORMATS
+from tszbench.schemas import READ_FORMATS
 
 OVERHEAD = "overhead"
 """Value of `format` for the reads of the 1-byte object."""
 
-PLOTTED_FORMATS = (*FORMATS, OVERHEAD)
+PLOTTED_FORMATS = (*READ_FORMATS, OVERHEAD)
 """Rows of Figures 1 and 2. `zarr-direct` is left out."""
 
 TEXT_COLUMNS = frozenset(

@@ -27,6 +27,7 @@ FORMAT_LABELS = {
     "nwb-zarr-time": "NWB Zarr, time chunks",
     "nwb-zarr-channel": "NWB Zarr, channel chunks",
     "tszarr": "TS-Zarr",
+    "tszarr-raw": "TS-Zarr, raw only",
     "overhead": "overhead (1 byte)",
 }
 

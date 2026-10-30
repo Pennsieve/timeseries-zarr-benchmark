@@ -14,8 +14,9 @@ from generate.formats import formats_of, write_format, write_one_byte_object
 from generate.nwb import SERIES_NAME, TIME_CHUNK_BYTES, ZSTD_LEVEL
 from tszbench import schemas
 from tszbench.edf import EdfRangeReader
-from tszbench.recordings import RECORDINGS, Gap
+from tszbench.recordings import RECORDINGS, Gap, hour_cut
 from tszbench.signal import Synthesizer
+from upload.storage import bundle_members
 
 ZSTD_FILTER_ID = 32015
 CHANNELS = 3
@@ -73,6 +74,7 @@ READERS: dict[str, Reader] = {
     "nwb-zarr-time": read_zarr,
     "nwb-zarr-channel": read_zarr,
     "tszarr": read_tszarr,
+    "tszarr-raw": read_tszarr,
 }
 
 
@@ -220,6 +222,28 @@ def test_a_failed_write_leaves_no_file(
 def test_the_formats_of_a_recording_leave_out_edf_without_a_record_duration():
     assert formats_of(RECORDINGS["R3"]) == schemas.FORMATS
     assert formats_of(RECORDINGS["R4"]) == schemas.FORMATS[1:]
+
+
+def test_the_hour_cuts_and_r4_include_the_raw_only_bundle():
+    assert "tszarr-raw" in formats_of(hour_cut("R2"))
+    assert "tszarr-raw" in formats_of(RECORDINGS["R4"])
+
+
+def test_the_raw_only_bundle_holds_no_level_member(written: dict[str, Path]):
+    members = bundle_members(written["tszarr-raw"])
+    for member in ("minmax", "mean", "var", "count"):
+        assert members[member] == (0, 0)
+    assert members["raw"][0] > 0
+    assert bundle_members(written["tszarr"])["minmax"][0] > 0
+
+
+def test_the_raw_only_bundle_has_the_raw_bytes_of_the_full_bundle(
+    written: dict[str, Path],
+):
+    assert (
+        bundle_members(written["tszarr-raw"])["raw"]
+        == bundle_members(written["tszarr"])["raw"]
+    )
 
 
 def test_the_one_byte_object_holds_one_byte(tmp_path: Path):

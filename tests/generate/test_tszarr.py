@@ -156,32 +156,45 @@ def test_level_one_matches_a_reduction_of_the_samples(bundle_path, expected):
             )
             counts = np.isfinite(bins).sum(axis=1)
             np.testing.assert_array_equal(level.count[:], counts)
-            full = counts == BINS_PER_LEVEL_ONE
+            some = counts > 0
+            finite = bins[some]
             minmax = level.minmax[:]
-            np.testing.assert_allclose(minmax[full, 0], bins[full].min(axis=1))
-            np.testing.assert_allclose(minmax[full, 1], bins[full].max(axis=1))
             np.testing.assert_allclose(
-                level.mean[:][full],
-                bins[full].mean(axis=1),
+                minmax[some, 0], np.nanmin(finite, axis=1)
+            )
+            np.testing.assert_allclose(
+                minmax[some, 1], np.nanmax(finite, axis=1)
+            )
+            np.testing.assert_allclose(
+                level.mean[:][some],
+                np.nanmean(finite, axis=1),
                 rtol=1e-5,
                 atol=1e-4,
             )
             np.testing.assert_allclose(
-                level.var[:][full], bins[full].var(axis=1), rtol=1e-4, atol=1e-3
+                level.var[:][some],
+                np.nanvar(finite, axis=1),
+                rtol=1e-4,
+                atol=1e-3,
             )
-            assert np.isnan(minmax[~full]).all()
-            assert np.isnan(level.mean[:][~full]).all()
-            assert np.isnan(level.var[:][~full]).all()
+            assert np.isnan(minmax[~some]).all()
+            assert np.isnan(level.mean[:][~some]).all()
+            assert np.isnan(level.var[:][~some]).all()
 
 
-def test_a_bin_with_a_gap_sample_is_nan_and_keeps_its_count(bundle_path):
+def test_a_bin_with_a_gap_sample_holds_the_minmax_of_its_finite_samples(
+    bundle_path, expected
+):
     first, _ = SPEC.gaps[1].sample_range(RATE_HZ)
     assert first % BINS_PER_LEVEL_ONE != 0
     index = first // BINS_PER_LEVEL_ONE
+    finite = expected[index * BINS_PER_LEVEL_ONE : first, 0]
     with open_bundle(bundle_path) as bundle:
         level = bundle.continuous[0].levels[1]
         assert level.count[index] == first % BINS_PER_LEVEL_ONE
-        assert np.isnan(level.minmax[index]).all()
+        np.testing.assert_allclose(
+            level.minmax[index], [finite.min(), finite.max()]
+        )
 
 
 def test_every_level_counts_the_finite_samples(bundle_path, expected):

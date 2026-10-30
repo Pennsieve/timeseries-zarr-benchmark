@@ -9,7 +9,7 @@ from pathlib import Path
 
 from generate.formats import formats_of, write_format, write_one_byte_object
 from tszbench import schemas
-from tszbench.csvmeta import CsvWriter, run_metadata
+from tszbench.csvmeta import CsvWriter, read_rows, run_metadata
 from tszbench.recordings import resolve
 
 
@@ -28,7 +28,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "comma-separated formats of "
             f"{','.join(schemas.FORMATS)} (default every format of the "
-            "recording)"
+            "recording). The generation CSV keeps the rows of the formats "
+            "not written"
         ),
     )
     parser.add_argument(
@@ -117,7 +118,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         recording=spec.id, seed=spec.seed, workers=args.workers
     )
     csv_path = args.results / schemas.generation_file(spec.id)
+    kept: list[dict[str, object]] = []
+    if csv_path.is_file():
+        kept = [
+            dict(row)
+            for row in read_rows(csv_path)
+            if row["format"] not in targets
+        ]
     with CsvWriter(csv_path, schemas.GENERATION, header) as writer:
+        writer.write_all(kept)
         for name, path in targets.items():
             if path.exists():
                 _remove(path)

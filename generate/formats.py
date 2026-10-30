@@ -71,6 +71,8 @@ def write_format(
             )
         elif file_format == "tszarr":
             write_tszarr(spec, path, workers)
+        elif file_format == "tszarr-raw":
+            write_tszarr(spec, path, workers, raw_only=True)
         else:
             backend, layout = _NWB_FORMATS[file_format]
             writer = write_nwb_hdf5 if backend == "hdf5" else write_nwb_zarr
