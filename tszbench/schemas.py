@@ -138,20 +138,40 @@ RESAMPLING_RUNS = (
     "median_bytes",
     "raw_bytes",
     "server_cpu_max",
-    "generator_link_max",
+    "server_cpu_sustained",
+    "server_memory_max",
+    "generator_link_sustained",
+    "generator_cpu_sustained",
+    "generator_cpu_s_per_request",
+    "s3_requests_per_second",
+    "s3_bytes_per_second",
     "repeated",
-    "link_limited",
+    "client_limited",
+    "client_limit",
     "not_run",
 )
 """One row per run, warm-up requests left out. `raw_bytes` is the float32 size
-of every channel under the window. `server_cpu_max` is the peak of the
-per-second CPU use in percent. `generator_link_max` is the peak per-second
-receive rate of any load generator as a fraction of its link. `repeated` is
-true for a run repeated with half the users per generator. `link_limited` is
-true for a run whose peak receive rate passed half the generator link and that
-no repeat replaced. `not_run` is true for a run that the orchestrator skipped
-because a smaller user count of the same method, recording, and window failed.
-Such a row holds the method, recording, window, and users, and no statistics."""
+of every channel under the window. `server_cpu_max` and `server_memory_max` are
+the peaks of the per-second CPU use and memory use of the server, in percent.
+`server_cpu_sustained` is the highest rolling mean of the server CPU use, in
+percent, over the measured part of the run. The measured part runs from the
+first measured dispatch to the last measured response.
+
+`generator_cpu_sustained` and `generator_link_sustained` are the highest
+rolling means over the measured part, for the busiest load generator of each
+resource. The first is a fraction of the generator CPU, the second a fraction
+of its link. `generator_cpu_s_per_request` is the CPU time of the load
+generators per measured request, in seconds of one vCPU.
+`s3_requests_per_second` and `s3_bytes_per_second` count the S3 requests and
+bytes of every measured request over the measured seconds.
+
+`repeated` is true for a run repeated with half the users per generator.
+`client_limited` is true for a run that the load generators may have limited
+and that no repeat replaced. `client_limit` names the resource, `cpu` or
+`link`, and is empty for a run that is not client limited. `not_run` is true
+for a run that the orchestrator skipped because a smaller user count of the
+same method, recording, and window failed. Such a row holds the method,
+recording, window, and users, and no statistics."""
 
 MONITOR = (
     "run",

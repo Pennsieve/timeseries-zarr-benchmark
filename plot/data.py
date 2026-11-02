@@ -39,7 +39,8 @@ TEXT_COLUMNS = frozenset(
         "generator",
         "user",
         "repeated",
-        "link_limited",
+        "client_limited",
+        "client_limit",
         "not_run",
         "warmup",
         "equal",
@@ -233,7 +234,7 @@ def link_limited(rows: Any) -> Any:
     A run is link limited when a load generator received more than half of its
     link and no repeat with fewer users per generator replaced the run.
     """
-    return as_bool(rows["link_limited"])
+    return as_bool(rows["client_limited"])
 
 
 def not_run(rows: Any) -> Any:

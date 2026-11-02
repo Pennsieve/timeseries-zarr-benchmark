@@ -22,7 +22,6 @@ from resampling_benchmark.load.orchestrate import (
     LocalRunner,
     RunSpec,
     Settings,
-    SustainedLoad,
     execute_run,
     execute_spec,
     fetch_server_metadata,
@@ -33,11 +32,16 @@ from resampling_benchmark.load.orchestrate import (
     plan_runs,
     run_grid,
     split_generators,
-    sustained_load,
     users_on,
     wait_for_idle,
 )
-from resampling_benchmark.summarize import find_runs, summarize, summarize_run
+from resampling_benchmark.summarize import (
+    SustainedLoad,
+    find_runs,
+    summarize,
+    summarize_run,
+    sustained_load,
+)
 from tests.resampling_benchmark.conftest import TINY_ID, TINY_SPEC
 from tszbench.csvmeta import CsvWriter
 from tszbench.fs import StoreRoots

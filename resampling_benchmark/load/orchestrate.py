@@ -18,12 +18,11 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, Protocol
+from typing import Protocol
 
 import httpx
 
 from resampling_benchmark.load.generator import (
-    LINK_BYTES_PER_S,
     MEASURED_REQUESTS,
     REQUEST_TIMEOUT_S,
     RUN_TIME_LIMIT_S,
@@ -32,9 +31,9 @@ from resampling_benchmark.load.generator import (
     format_window,
 )
 from resampling_benchmark.summarize import (
-    measured_span,
+    SustainedLoad,
     median_charged_seconds,
-    sustained_mean,
+    sustained_load,
 )
 from tszbench.recordings import RECORDINGS, resolve
 from tszbench.schemas import (
@@ -117,18 +116,6 @@ class Hosts:
 
     server: str
     generators: tuple[str, ...]
-
-
-class SustainedLoad(NamedTuple):
-    """The highest sustained load of any load generator of a run.
-
-    Attributes:
-        cpu: Sustained CPU use as a fraction of the generator's CPU, 0 to 1.
-        link: Sustained receive rate as a fraction of `LINK_BYTES_PER_S`.
-    """
-
-    cpu: float
-    link: float
 
 
 @dataclass(frozen=True)
@@ -524,41 +511,6 @@ class Settings:
     duration_s: float | None = None
     idle_check: Callable[[str], float] | None = None
     server_metadata: Callable[[str], dict[str, str]] | None = None
-
-
-def sustained_load(
-    request_paths: Iterable[Path], monitor_paths: Iterable[Path]
-) -> SustainedLoad | None:
-    """Return the highest sustained CPU use and receive rate of any generator.
-
-    Each value is the highest `SATURATION_WINDOW_S` rolling mean over the
-    measured part of the run, as `summarize.measured_span` bounds it.
-
-    Args:
-        request_paths: Request CSVs of the run.
-        monitor_paths: Monitor CSVs of the load generators. A path that does
-            not exist is skipped.
-
-    Returns:
-        The two fractions, or None when no monitor sample falls inside the
-        measured part.
-    """
-    span = measured_span(list(request_paths))
-    if span is None:
-        return None
-    cpu: list[float] = []
-    link: list[float] = []
-    for path in monitor_paths:
-        if not path.exists():
-            continue
-        busy = sustained_mean(path, "cpu_percent", span)
-        received = sustained_mean(path, "rx_bytes_per_s", span)
-        if busy is not None and received is not None:
-            cpu.append(busy / 100.0)
-            link.append(received / LINK_BYTES_PER_S)
-    if not cpu:
-        return None
-    return SustainedLoad(max(cpu), max(link))
 
 
 def limiting_resource(load: SustainedLoad | None) -> str | None:

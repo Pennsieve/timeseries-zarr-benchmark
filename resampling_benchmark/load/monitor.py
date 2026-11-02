@@ -5,6 +5,7 @@ Samples CPU use, memory use, and network throughput once per second from
 """
 
 import argparse
+import os
 import signal
 import socket
 import threading
@@ -218,7 +219,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     signal.signal(signal.SIGINT, handle)
     signal.signal(signal.SIGTERM, handle)
-    header = run_metadata(run=arguments.run, role=arguments.role)
+    header = run_metadata(
+        run=arguments.run, role=arguments.role, vcpus=os.cpu_count()
+    )
     with CsvWriter(arguments.out, MONITOR, header) as writer:
         monitor(
             writer,

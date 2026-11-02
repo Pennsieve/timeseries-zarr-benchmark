@@ -130,7 +130,7 @@ def run_row(
     failure_rate: float = 0.0,
     rate: float = 1.0,
     repeated: bool = False,
-    link_limited: bool = False,
+    client_limit: str = "",
     requests: int = 90,
     median_bytes: float = 1000.0,
 ) -> dict[str, object]:
@@ -152,9 +152,16 @@ def run_row(
         "median_bytes": median_bytes,
         "raw_bytes": RECORDINGS[recording].raw_bytes * window // 86_400,
         "server_cpu_max": 50.0,
-        "generator_link_max": 0.1,
+        "server_cpu_sustained": 40.0,
+        "server_memory_max": 20.0,
+        "generator_link_sustained": 0.1,
+        "generator_cpu_sustained": 0.1,
+        "generator_cpu_s_per_request": 0.5,
+        "s3_requests_per_second": 100.0,
+        "s3_bytes_per_second": 1e6,
         "repeated": "true" if repeated else "false",
-        "link_limited": "true" if link_limited else "false",
+        "client_limited": "true" if client_limit else "false",
+        "client_limit": client_limit,
         "not_run": "false",
     }
 
@@ -456,7 +463,8 @@ def mark_link_limited(
         & (changed["users"] == users)
         & (changed["repeated"] == "false")
     )
-    changed.loc[mask, "link_limited"] = "true"
+    changed.loc[mask, "client_limited"] = "true"
+    changed.loc[mask, "client_limit"] = "link"
     return changed
 
 
@@ -484,7 +492,13 @@ NOT_RUN_BLANKED = (
     "median_bytes",
     "raw_bytes",
     "server_cpu_max",
-    "generator_link_max",
+    "server_cpu_sustained",
+    "server_memory_max",
+    "generator_link_sustained",
+    "generator_cpu_sustained",
+    "generator_cpu_s_per_request",
+    "s3_requests_per_second",
+    "s3_bytes_per_second",
 )
 
 
