@@ -16,6 +16,7 @@ from resampling_benchmark.load.generator import (
     SATURATION_WINDOW_S,
 )
 from resampling_benchmark.load.orchestrate import (
+    USERS_PER_GENERATOR,
     WINDOWS_S,
     Hosts,
     LocalRunner,
@@ -177,12 +178,24 @@ def test_a_run_is_named_by_method_recording_window_and_users() -> None:
     assert RunSpec("server", "R3", 600, 100).name == "server-R3-600-100"
 
 
-def test_about_one_hundred_users_share_a_generator() -> None:
-    assert split_generators(1, 10) == (1, 1)
-    assert split_generators(100, 10) == (1, 100)
-    assert split_generators(101, 10) == (2, 51)
-    assert split_generators(1000, 10) == (10, 100)
-    assert split_generators(1000, 4) == (4, 250)
+def test_users_per_generator_depends_on_the_method() -> None:
+    assert USERS_PER_GENERATOR == {"server": 100, "precomputed": 12}
+
+
+def test_about_one_hundred_server_users_share_a_generator() -> None:
+    assert split_generators(1, 10, "server") == (1, 1)
+    assert split_generators(100, 10, "server") == (1, 100)
+    assert split_generators(101, 10, "server") == (2, 51)
+    assert split_generators(1000, 10, "server") == (10, 100)
+    assert split_generators(1000, 4, "server") == (4, 250)
+
+
+def test_about_twelve_precomputed_users_share_a_generator() -> None:
+    assert split_generators(1, 20, "precomputed") == (1, 1)
+    assert split_generators(10, 20, "precomputed") == (1, 10)
+    assert split_generators(100, 20, "precomputed") == (9, 12)
+    assert split_generators(1000, 20, "precomputed") == (20, 50)
+    assert split_generators(1000, 100, "precomputed") == (84, 12)
 
 
 def test_users_are_dealt_to_generators_in_turn() -> None:
@@ -219,6 +232,7 @@ def test_the_generator_command_carries_the_run_and_the_common_start() -> None:
     assert pairs["--generator-index"] == "1"
     assert pairs["--start-at"] == "1234.5"
     assert pairs["--server-url"] == "http://10.0.0.1:8000"
+    assert "--users-per-generator" not in command
     assert "--repeated" not in command
 
 
@@ -240,6 +254,7 @@ def test_the_precomputed_command_has_no_server_url_and_a_repeat_flag() -> None:
     )
     assert "--server-url" not in command
     assert command[-1] == "--repeated"
+    assert "--users-per-generator" not in command
     assert "--s3-endpoint-url" in command
 
 
@@ -418,6 +433,11 @@ def test_a_run_starts_monitors_first_and_every_generator_at_one_time(
         for argv in runner.generator_launches()
     ]
     assert users == [84, 83, 83]
+    caps = {
+        argv[argv.index("--users-per-generator") + 1]
+        for argv in runner.generator_launches()
+    }
+    assert caps == {"100"}
     assert len(runner.stopped) == 4
     assert (result.directory / "requests-2.csv").exists()
     assert (result.directory / "monitor-server.csv").exists()
@@ -539,8 +559,24 @@ def test_sustained_load_is_none_without_a_start_time_or_a_sample(
     assert sustained_load([dated], [tmp_path / "absent.csv"]) is None
 
 
-def test_a_run_below_the_limits_is_not_repeated(tmp_path: Path) -> None:
+def test_a_precomputed_run_passes_its_own_cap_to_every_generator(
+    tmp_path: Path,
+) -> None:
+    runner = FakeRunner()
     spec = RunSpec("precomputed", "R3", 10, 100)
+    result = execute_run(
+        spec, spec.name, 9, settings(tmp_path, 9), runner, False
+    )
+    assert result.users_per_generator == 12
+    caps = {
+        argv[argv.index("--users-per-generator") + 1]
+        for argv in runner.generator_launches()
+    }
+    assert caps == {"12"}
+
+
+def test_a_run_below_the_limits_is_not_repeated(tmp_path: Path) -> None:
+    spec = RunSpec("server", "R3", 10, 100)
     runner = FakeRunner(
         {spec.name: 0.49 * LINK_BYTES_PER_S}, cpu={spec.name: 49.0}
     )
@@ -551,7 +587,7 @@ def test_a_run_below_the_limits_is_not_repeated(tmp_path: Path) -> None:
 
 
 def test_one_second_receive_spike_starts_no_repeat(tmp_path: Path) -> None:
-    spec = RunSpec("precomputed", "R3", 10, 100)
+    spec = RunSpec("server", "R3", 10, 100)
     spike = [0.8 * LINK_BYTES_PER_S] + [0.0] * (SAMPLES - 1)
     runner = FakeRunner({spec.name: spike})
     results = execute_spec(spec, settings(tmp_path, 4), runner)
@@ -564,7 +600,7 @@ def test_one_second_receive_spike_starts_no_repeat(tmp_path: Path) -> None:
 def test_a_run_above_half_the_link_repeats_with_half_the_users_per_generator(
     tmp_path: Path,
 ) -> None:
-    spec = RunSpec("precomputed", "R3", 10, 100)
+    spec = RunSpec("server", "R3", 10, 100)
     runner = FakeRunner({spec.name: 0.51 * LINK_BYTES_PER_S})
     results = execute_spec(spec, settings(tmp_path, 4), runner)
     assert [result.run for result in results] == [
@@ -586,7 +622,7 @@ def test_a_run_above_half_the_link_repeats_with_half_the_users_per_generator(
 def test_a_ten_second_mean_of_cpu_above_half_repeats_with_half_the_users(
     tmp_path: Path,
 ) -> None:
-    spec = RunSpec("precomputed", "R3", 10, 100)
+    spec = RunSpec("server", "R3", 10, 100)
     runner = FakeRunner(cpu={spec.name: [20.0] * 15 + [60.0] * 15})
     results = execute_spec(spec, settings(tmp_path, 4), runner)
     assert [result.run for result in results] == [
@@ -602,7 +638,7 @@ def test_a_ten_second_mean_of_cpu_above_half_repeats_with_half_the_users(
 def test_a_repeat_still_above_the_cpu_limit_is_client_limited_by_cpu(
     tmp_path: Path,
 ) -> None:
-    spec = RunSpec("precomputed", "R3", 10, 100)
+    spec = RunSpec("server", "R3", 10, 100)
     runner = FakeRunner(
         cpu={spec.name: 90.0, f"{spec.name}-repeat": 70.0},
         peaks={f"{spec.name}-repeat": 0.1 * LINK_BYTES_PER_S},
@@ -617,7 +653,7 @@ def test_a_repeat_still_above_the_cpu_limit_is_client_limited_by_cpu(
 def test_a_repeat_still_above_the_link_limit_is_client_limited_by_link(
     tmp_path: Path,
 ) -> None:
-    spec = RunSpec("precomputed", "R3", 10, 100)
+    spec = RunSpec("server", "R3", 10, 100)
     runner = FakeRunner(
         {
             spec.name: 0.9 * LINK_BYTES_PER_S,
@@ -634,7 +670,7 @@ def test_a_repeat_still_above_the_link_limit_is_client_limited_by_link(
 def test_a_repeat_below_the_limits_carries_no_client_limited_file(
     tmp_path: Path,
 ) -> None:
-    spec = RunSpec("precomputed", "R3", 10, 100)
+    spec = RunSpec("server", "R3", 10, 100)
     runner = FakeRunner(
         {spec.name: 0.9 * LINK_BYTES_PER_S, f"{spec.name}-repeat": 0.4e9}
     )
@@ -648,7 +684,7 @@ def test_a_repeat_below_the_limits_carries_no_client_limited_file(
 def test_a_new_run_removes_the_client_limited_file_of_an_earlier_one(
     tmp_path: Path,
 ) -> None:
-    spec = RunSpec("precomputed", "R3", 10, 1000)
+    spec = RunSpec("server", "R3", 10, 1000)
     directory = tmp_path / "out" / spec.name
     directory.mkdir(parents=True)
     (directory / CLIENT_LIMITED_FILE).write_text("link\n")
@@ -716,6 +752,19 @@ def test_a_run_with_fewer_generators_than_it_needs_is_client_limited_by_cpu(
 ) -> None:
     spec = RunSpec("server", "R3", 10, 1000)
     (result,) = execute_spec(spec, settings(tmp_path, 4), FakeRunner())
+    assert (result.directory / CLIENT_LIMITED_FILE).read_text() == "cpu\n"
+
+
+def test_the_precomputed_1000_user_run_on_20_generators_is_client_limited(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    spec = RunSpec("precomputed", "R3", 10, 1000)
+    with caplog.at_level(
+        logging.WARNING, logger="resampling_benchmark.orchestrate"
+    ):
+        (result,) = execute_spec(spec, settings(tmp_path, 20), FakeRunner())
+    assert (result.generators, result.users_per_generator) == (20, 50)
+    assert "needs 84 generators, hosts file holds 20" in caplog.text
     assert (result.directory / CLIENT_LIMITED_FILE).read_text() == "cpu\n"
 
 

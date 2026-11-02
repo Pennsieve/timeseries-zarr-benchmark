@@ -285,7 +285,9 @@ def test_users_of_the_server_method_write_rows_against_a_live_server(
     server_url: str, tmp_path: Path
 ) -> None:
     out = tmp_path / "requests-0.csv"
-    settings = config(server_url=server_url, total_users=2)
+    settings = config(
+        server_url=server_url, total_users=2, users_per_generator=100
+    )
     written = run_generator(settings, out)
     rows = read_rows(out)
     assert written == len(rows) == 2 * 4
@@ -309,6 +311,7 @@ def test_users_of_the_server_method_write_rows_against_a_live_server(
     assert header["run"] == "unit-run"
     assert header["repeated"] == "false"
     assert float(header["start_at"]) == settings.start_at
+    assert header["method_users_per_generator"] == "100"
 
 
 @pytest.mark.network

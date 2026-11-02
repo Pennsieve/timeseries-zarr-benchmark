@@ -53,7 +53,11 @@ from tszbench.schemas import (
 
 LOGGER = logging.getLogger("resampling_benchmark.orchestrate")
 
-USERS_PER_GENERATOR = 100
+USERS_PER_GENERATOR = {"server": 100, "precomputed": 12}
+"""Most users on one load generator, by method. A server user costs the
+generator almost no CPU. A precomputed user decodes and reduces on the
+generator, so its cap is lower."""
+
 START_DELAY_S = 15.0
 """Seconds between launching a run and its common start time."""
 
@@ -236,13 +240,16 @@ def plan_runs(
     return runs
 
 
-def split_generators(users: int, available: int) -> tuple[int, int]:
+def split_generators(
+    users: int, available: int, method: str
+) -> tuple[int, int]:
     """Return the generators to use and the users on the busiest one.
 
-    Uses `ceil(users / USERS_PER_GENERATOR)` generators, or all that are
-    available when fewer.
+    Uses `ceil(users / USERS_PER_GENERATOR[method])` generators, or all that
+    are available when fewer.
     """
-    generators = max(1, min(available, math.ceil(users / USERS_PER_GENERATOR)))
+    wanted = math.ceil(users / USERS_PER_GENERATOR[method])
+    generators = max(1, min(available, wanted))
     return generators, math.ceil(users / generators)
 
 
@@ -269,8 +276,13 @@ def generator_command(
     measured_requests: int = MEASURED_REQUESTS,
     time_limit_s: float = RUN_TIME_LIMIT_S,
     duration_s: float | None = None,
+    users_per_generator: int | None = None,
 ) -> list[str]:
-    """Return the command line of one load generator."""
+    """Return the command line of one load generator.
+
+    `users_per_generator` is the cap of the method. The generator records it in
+    its CSV header.
+    """
     command = [
         python,
         "-m",
@@ -312,6 +324,8 @@ def generator_command(
         command += ["--processes", str(processes)]
     if duration_s is not None:
         command += ["--duration-s", str(duration_s)]
+    if users_per_generator is not None:
+        command += ["--users-per-generator", str(users_per_generator)]
     if repeated:
         command.append("--repeated")
     return command
@@ -644,6 +658,7 @@ def execute_run(
             settings.measured_requests,
             settings.time_limit_s,
             settings.duration_s,
+            USERS_PER_GENERATOR[spec.method],
         )
         jobs.append(runner.launch(host, command))
     limit = settings.start_delay_s + settings.time_limit_s + REQUEST_TIMEOUT_S
@@ -703,15 +718,17 @@ def execute_spec(
     few generators for that, the shortfall is logged and only the first run
     stays. A run that stays above the limit gets a `CLIENT_LIMITED_FILE` that
     names the resource, and so does a repeat that is still above it. A run
-    with fewer generators than `USERS_PER_GENERATOR` asks for is client
+    with fewer generators than `USERS_PER_GENERATOR` asks for its method is client
     limited too. It names the resource above the limit, or `cpu` when none is.
     A repeat directory of an earlier pass moves out of the results first with
     `_discard`.
     """
     _discard(settings, f"{spec.name}-repeat")
     available = len(settings.hosts.generators)
-    generators, per_generator = split_generators(spec.users, available)
-    needed = math.ceil(spec.users / USERS_PER_GENERATOR)
+    generators, per_generator = split_generators(
+        spec.users, available, spec.method
+    )
+    needed = math.ceil(spec.users / USERS_PER_GENERATOR[spec.method])
     if generators < needed:
         LOGGER.warning(
             "run %s: needs %d generators, hosts file holds %d; using %d with "
