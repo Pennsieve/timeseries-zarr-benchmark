@@ -4,9 +4,11 @@ from plot.data import NoDataError
 from plot.methods import (
     budget_paragraph,
     check_paragraph,
+    client_cost_paragraph,
     generation_paragraph,
     not_run_paragraph,
     open_paragraph,
+    s3_rate_paragraph,
     upload_paragraph,
     versions_paragraph,
     write_methods,
@@ -176,15 +178,34 @@ def test_versions_paragraph_lists_every_version_the_files_disagree_on(
     assert "tsdownsample (0.1.5.0, 0.1.5.1)" in versions_paragraph(results_dir)
 
 
+def _write_runs_with_client_limited(results_dir) -> None:
+    rows = run_rows()
+    for row in rows:
+        if (
+            row["method"] == "precomputed"
+            and row["recording"] == "R3"
+            and row["users"] == 1000
+        ):
+            row["client_limited"] = "true"
+            row["client_limit"] = "cpu"
+            row["s3_requests_per_second"] = 107_000.0
+            row["s3_bytes_per_second"] = 3.7e9
+    with CsvWriter(
+        results_dir / "resampling-runs.csv", RESAMPLING_RUNS, {}
+    ) as w:
+        w.write_all(rows)
+
+
 def test_write_methods_writes_one_paragraph_per_statement(
     results_dir, tmp_path
 ):
+    _write_runs_with_client_limited(results_dir)
     messages: list[str] = []
     output = write_methods(results_dir, tmp_path / "out", messages.append)
     assert [p.name for p in output.paths] == ["methods.txt"]
     assert output.caption == ""
     text = output.paths[0].read_text()
-    assert len(text.strip().split("\n\n")) == 7
+    assert len(text.strip().split("\n\n")) == 9
     assert text.isascii()
     assert messages == []
 
@@ -194,9 +215,10 @@ def test_write_methods_skips_a_paragraph_whose_csv_is_absent(
 ):
     (results_dir / "format-opens.csv").unlink()
     (results_dir / "resampling-check.csv").unlink()
+    _write_runs_with_client_limited(results_dir)
     messages: list[str] = []
     output = write_methods(results_dir, tmp_path, messages.append)
-    assert len(output.paths[0].read_text().strip().split("\n\n")) == 4
+    assert len(output.paths[0].read_text().strip().split("\n\n")) == 6
     assert messages == [
         "Methods open sentence: format-opens.csv not found",
         "Methods read budget sentence: format-opens.csv not found",
@@ -210,7 +232,7 @@ def test_write_methods_raises_without_any_data(tmp_path):
     messages: list[str] = []
     with pytest.raises(NoDataError):
         write_methods(empty, tmp_path / "out", messages.append)
-    assert len(messages) == 7
+    assert len(messages) == 9
     assert not (tmp_path / "out" / "methods.txt").exists()
 
 
@@ -248,3 +270,86 @@ def test_not_run_paragraph_skips_without_the_runs_file(results_dir):
 def test_write_methods_includes_the_not_run_paragraph(results_dir, tmp_path):
     output = write_methods(results_dir, tmp_path / "out", lambda message: None)
     assert "Every planned run was run." in output.paths[0].read_text()
+
+
+COSTS = (0.2, 0.4, 0.9, 1.0, 2.0, 3.0, 4.0, 5.0)
+
+
+def test_client_cost_paragraph_gives_the_median_cpu_seconds_per_request(
+    results_dir,
+):
+    rows = run_rows()
+    chosen = [
+        row
+        for row in rows
+        if row["method"] == "precomputed"
+        and row["recording"] == "R3"
+        and row["repeated"] == "false"
+    ]
+    for row, cost in zip(chosen, COSTS, strict=True):
+        row["generator_cpu_s_per_request"] = cost
+    with CsvWriter(
+        results_dir / "resampling-runs.csv", RESAMPLING_RUNS, {}
+    ) as w:
+        w.write_all(rows)
+    assert client_cost_paragraph(results_dir) == (
+        "One precomputed request costs the load generators a median of 1.50 "
+        "CPU-seconds of one vCPU, over eight runs of R3 that are not client "
+        "limited."
+    )
+
+
+def test_client_cost_paragraph_leaves_out_client_limited_runs(results_dir):
+    rows = run_rows()
+    for row in rows:
+        if row["method"] == "precomputed" and row["recording"] == "R3":
+            row["generator_cpu_s_per_request"] = 0.25
+            if row["users"] == 1000:
+                row["client_limited"] = "true"
+                row["client_limit"] = "cpu"
+                row["generator_cpu_s_per_request"] = 99.0
+    with CsvWriter(
+        results_dir / "resampling-runs.csv", RESAMPLING_RUNS, {}
+    ) as w:
+        w.write_all(rows)
+    assert "a median of 0.250 CPU-seconds" in client_cost_paragraph(results_dir)
+
+
+def test_client_cost_paragraph_raises_without_a_value(results_dir):
+    rows = run_rows()
+    for row in rows:
+        row["generator_cpu_s_per_request"] = ""
+    with CsvWriter(
+        results_dir / "resampling-runs.csv", RESAMPLING_RUNS, {}
+    ) as w:
+        w.write_all(rows)
+    with pytest.raises(NoDataError):
+        client_cost_paragraph(results_dir)
+
+
+def test_client_cost_paragraph_raises_without_the_runs_file(results_dir):
+    (results_dir / "resampling-runs.csv").unlink()
+    with pytest.raises(NoDataError):
+        client_cost_paragraph(results_dir)
+
+
+def test_s3_rate_paragraph_gives_the_rates_of_each_window(results_dir):
+    _write_runs_with_client_limited(results_dir)
+    text = s3_rate_paragraph(results_dir)
+    assert text.startswith(
+        "S3 served the client-limited precomputed runs of R3 at 1,000 users "
+        "at 107,000 requests per second and 3.7 GB per second ("
+    )
+    assert text.count("107,000 requests per second") == 2
+    assert text.endswith(" window).")
+
+
+def test_s3_rate_paragraph_raises_without_a_client_limited_run(results_dir):
+    with pytest.raises(NoDataError):
+        s3_rate_paragraph(results_dir)
+
+
+def test_s3_rate_paragraph_raises_without_the_runs_file(results_dir):
+    (results_dir / "resampling-runs.csv").unlink()
+    with pytest.raises(NoDataError):
+        s3_rate_paragraph(results_dir)
