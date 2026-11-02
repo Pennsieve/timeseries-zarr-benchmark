@@ -186,6 +186,35 @@ MONITOR = (
 """One row per host per second during a resampling benchmark run.
 `memory_percent` is the memory in use as a percent of the host memory."""
 
+CALIBRATION_SERVER = (
+    "task_threads",
+    "run",
+    "recording",
+    "window_s",
+    "users",
+    "requests_per_second",
+    "median_s",
+    "server_cpu_sustained",
+    "server_memory_max",
+    "s3_requests_per_second",
+)
+"""One row per server method run of the `--task-threads` sweep. `task_threads` is
+empty when the run directory has no server metadata. The other columns are the
+`RESAMPLING_RUNS` columns of the same name."""
+
+CALIBRATION_GENERATOR = (
+    "run",
+    "recording",
+    "window_s",
+    "users",
+    "generator_cpu_sustained",
+    "generator_link_sustained",
+    "median_s",
+    "generator_cpu_s_per_request",
+)
+"""One row per precomputed method run of the users per generator sweep. The
+columns are the `RESAMPLING_RUNS` columns of the same name."""
+
 CHECK = (
     "recording",
     "window_s",
@@ -241,6 +270,12 @@ RESAMPLING_REQUESTS_FILE = "resampling-requests.csv"
 
 RESAMPLING_RUNS_FILE = "resampling-runs.csv"
 """Result file of the resampling benchmark, one `RESAMPLING_RUNS` row per run."""
+
+CALIBRATION_SERVER_FILE = "calibration-server.csv"
+"""Result file of the `--task-threads` sweep, `CALIBRATION_SERVER` rows."""
+
+CALIBRATION_GENERATOR_FILE = "calibration-generator.csv"
+"""Result file of the users per generator sweep, `CALIBRATION_GENERATOR` rows."""
 
 CHECK_FILE = "resampling-check.csv"
 """Result file of the equality check, `CHECK` rows."""
