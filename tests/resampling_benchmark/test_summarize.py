@@ -14,14 +14,16 @@ from resampling_benchmark.summarize import (
     FAILED_REQUEST_SECONDS_KEY,
     deployment_metadata,
     find_runs,
+    measured_span,
     median_charged_seconds,
     summarize,
     summarize_run,
+    sustained_mean,
 )
 from tszbench.csvmeta import CsvWriter, read_header
 from tszbench.recordings import RECORDINGS, RecordingSpec
 from tszbench.schemas import (
-    LINK_LIMITED_FILE,
+    CLIENT_LIMITED_FILE,
     MONITOR,
     NOT_RUN_FILE,
     RESAMPLING_REQUESTS,
@@ -103,6 +105,7 @@ def write_monitor(
                     "cpu_percent": cpu,
                     "rx_bytes_per_s": rx,
                     "tx_bytes_per_s": 0.0,
+                    "memory_percent": 10.0,
                 }
             )
 
@@ -357,14 +360,17 @@ def test_both_csvs_record_the_failed_request_seconds_in_the_header(
         assert float(header[FAILED_REQUEST_SECONDS_KEY]) == REQUEST_TIMEOUT_S
 
 
-def test_a_run_is_link_limited_only_when_it_has_the_marker_file(
+def test_a_run_is_client_limited_only_when_it_has_the_marker_file(
     run_directory: Path,
 ) -> None:
+    assert find_runs(run_directory)[0].client_limit == ""
     assert (
         summarize_run(find_runs(run_directory)[0], lookup)["link_limited"]
         == "false"
     )
-    (run_directory / "server-S1-10-2" / LINK_LIMITED_FILE).touch()
+    marker = run_directory / "server-S1-10-2" / CLIENT_LIMITED_FILE
+    marker.write_text("cpu\n")
+    assert find_runs(run_directory)[0].client_limit == "cpu"
     assert (
         summarize_run(find_runs(run_directory)[0], lookup)["link_limited"]
         == "true"
@@ -377,6 +383,68 @@ def test_a_high_link_peak_alone_does_not_mark_a_run_link_limited(
     row = summarize_run(find_runs(run_directory)[0], lookup)
     assert row["generator_link_max"] == pytest.approx(0.5)
     assert row["link_limited"] == "false"
+
+
+def test_the_measured_span_runs_from_the_first_measured_dispatch_to_the_last_response(
+    tmp_path: Path,
+) -> None:
+    write_requests(
+        tmp_path / "requests-0.csv",
+        [
+            request_row(0, warmup=True, dispatch=0.0, seconds=9.0),
+            request_row(1, dispatch=4.0, seconds=2.0),
+            request_row(2, dispatch=6.0, seconds=3.0),
+        ],
+        start_at="1000.0",
+    )
+    write_requests(
+        tmp_path / "requests-1.csv",
+        [
+            request_row(0, warmup=True, dispatch=0.0, seconds=1.0),
+            request_row(1, dispatch=3.0, seconds=8.0),
+            request_row(2, dispatch=5.0, seconds=""),
+        ],
+        start_at="1000.0",
+    )
+    paths = [tmp_path / "requests-0.csv", tmp_path / "requests-1.csv"]
+    assert measured_span(paths) == (1003.0, 1011.0)
+
+
+def test_the_measured_span_is_none_without_a_start_time_or_a_measured_request(
+    tmp_path: Path,
+) -> None:
+    write_requests(tmp_path / "undated.csv", [request_row(1)])
+    write_requests(
+        tmp_path / "warmup.csv",
+        [request_row(0, warmup=True)],
+        start_at="1000.0",
+    )
+    assert measured_span([tmp_path / "undated.csv"]) is None
+    assert measured_span([tmp_path / "warmup.csv"]) is None
+
+
+def test_a_sustained_mean_is_the_highest_mean_of_ten_consecutive_samples(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "monitor.csv"
+    values = [(0.0, 0.0)] * 5 + [(100.0, 0.0)] * 6 + [(10.0, 0.0)] * 9
+    write_monitor(path, "generator", values)
+    span = (-1.0, 100.0)
+    assert sustained_mean(path, "cpu_percent", span) == pytest.approx(
+        (6 * 100.0 + 4 * 10.0) / 10
+    )
+    assert sustained_mean(path, "cpu_percent", span, window_s=3) == (
+        pytest.approx(100.0)
+    )
+
+
+def test_a_sustained_mean_over_fewer_samples_than_the_window_is_their_mean(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "monitor.csv"
+    write_monitor(path, "generator", [(10.0, 0.0), (30.0, 0.0)])
+    assert sustained_mean(path, "cpu_percent", (-1.0, 100.0)) == 20.0
+    assert sustained_mean(path, "cpu_percent", (500.0, 600.0)) is None
 
 
 def test_the_header_copies_the_server_metadata_and_the_generator_fields(

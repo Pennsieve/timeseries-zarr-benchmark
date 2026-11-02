@@ -18,25 +18,29 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import httpx
-import pandas as pd
 
 from resampling_benchmark.load.generator import (
     LINK_BYTES_PER_S,
     MEASURED_REQUESTS,
     REQUEST_TIMEOUT_S,
     RUN_TIME_LIMIT_S,
+    SATURATION_LIMIT,
     WARMUP_REQUESTS,
     format_window,
 )
-from resampling_benchmark.summarize import median_charged_seconds
+from resampling_benchmark.summarize import (
+    measured_span,
+    median_charged_seconds,
+    sustained_mean,
+)
 from tszbench.recordings import RECORDINGS, resolve
 from tszbench.schemas import (
+    CLIENT_LIMITED_FILE,
     COMPLETE_FILE,
     IDLE_WAIT_FILE,
-    LINK_LIMITED_FILE,
     METHODS,
     NOT_RUN_FILE,
     REQUESTS_PATTERN,
@@ -111,6 +115,18 @@ class Hosts:
     generators: tuple[str, ...]
 
 
+class SustainedLoad(NamedTuple):
+    """The highest sustained load of any load generator of a run.
+
+    Attributes:
+        cpu: Sustained CPU use as a fraction of the generator's CPU, 0 to 1.
+        link: Sustained receive rate as a fraction of `LINK_BYTES_PER_S`.
+    """
+
+    cpu: float
+    link: float
+
+
 @dataclass(frozen=True)
 class RunResult:
     """What the orchestrator recorded for one run.
@@ -121,8 +137,8 @@ class RunResult:
         directory: Local directory that holds the run's CSVs.
         generators: Generators used.
         users_per_generator: Users on the busiest generator.
-        peak_rx_bytes_per_s: Highest receive rate of any generator, or None
-            when no monitor ran.
+        load: Sustained load of the busiest generator for each resource, or
+            None when no monitor sample covers the measured requests.
         repeated: True for a repeat with half the users per generator.
     """
 
@@ -131,7 +147,7 @@ class RunResult:
     directory: Path
     generators: int
     users_per_generator: int
-    peak_rx_bytes_per_s: float | None
+    load: SustainedLoad | None
     repeated: bool
 
 
@@ -496,17 +512,58 @@ class Settings:
     server_metadata: Callable[[str], dict[str, str]] | None = None
 
 
-def peak_receive_rate(paths: Iterable[Path]) -> float | None:
-    """Return the highest `rx_bytes_per_s` in monitor CSVs, or None if no rows."""
-    peak: float | None = None
-    for path in paths:
+def sustained_load(
+    request_paths: Iterable[Path], monitor_paths: Iterable[Path]
+) -> SustainedLoad | None:
+    """Return the highest sustained CPU use and receive rate of any generator.
+
+    Each value is the highest `SATURATION_WINDOW_S` rolling mean over the
+    measured part of the run, as `summarize.measured_span` bounds it.
+
+    Args:
+        request_paths: Request CSVs of the run.
+        monitor_paths: Monitor CSVs of the load generators. A path that does
+            not exist is skipped.
+
+    Returns:
+        The two fractions, or None when no monitor sample falls inside the
+        measured part.
+    """
+    span = measured_span(list(request_paths))
+    if span is None:
+        return None
+    cpu: list[float] = []
+    link: list[float] = []
+    for path in monitor_paths:
         if not path.exists():
             continue
-        frame = pd.read_csv(path, comment="#")
-        if len(frame):
-            value = float(frame["rx_bytes_per_s"].max())
-            peak = value if peak is None else max(peak, value)
-    return peak
+        busy = sustained_mean(path, "cpu_percent", span)
+        received = sustained_mean(path, "rx_bytes_per_s", span)
+        if busy is not None and received is not None:
+            cpu.append(busy / 100.0)
+            link.append(received / LINK_BYTES_PER_S)
+    if not cpu:
+        return None
+    return SustainedLoad(max(cpu), max(link))
+
+
+def limiting_resource(load: SustainedLoad | None) -> str | None:
+    """Return `cpu` or `link` for the resource above `SATURATION_LIMIT`.
+
+    The resource with the larger fraction wins, and `cpu` wins a tie. None
+    means that neither passes the limit, or that there is no load.
+    """
+    if load is None:
+        return None
+    if load.cpu > SATURATION_LIMIT and load.cpu >= load.link:
+        return "cpu"
+    if load.link > SATURATION_LIMIT:
+        return "link"
+    return None
+
+
+def _mark_client_limited(directory: Path, resource: str) -> None:
+    (directory / CLIENT_LIMITED_FILE).write_text(f"{resource}\n")
 
 
 def execute_run(
@@ -533,7 +590,7 @@ def execute_run(
     directory = settings.out / run
     directory.mkdir(parents=True, exist_ok=True)
     (directory / COMPLETE_FILE).unlink(missing_ok=True)
-    (directory / LINK_LIMITED_FILE).unlink(missing_ok=True)
+    (directory / CLIENT_LIMITED_FILE).unlink(missing_ok=True)
     (directory / NOT_RUN_FILE).unlink(missing_ok=True)
     (directory / SERVER_METADATA_FILE).unlink(missing_ok=True)
     if spec.method == "server" and settings.idle_check is not None:
@@ -612,8 +669,12 @@ def execute_run(
         runner.fetch(host, f"{remote}/{name}", directory / name)
     if any(status != 0 for status in statuses):
         raise RuntimeError(f"run {run}: generator exit statuses {statuses}")
-    peak = peak_receive_rate(
-        directory / generator_monitor_file(index) for index in range(generators)
+    load = sustained_load(
+        (directory / requests_file(index) for index in range(generators)),
+        (
+            directory / generator_monitor_file(index)
+            for index in range(generators)
+        ),
     )
     return RunResult(
         spec=spec,
@@ -623,7 +684,7 @@ def execute_run(
         users_per_generator=max(
             users_on(spec.users, generators, i) for i in range(generators)
         ),
-        peak_rx_bytes_per_s=peak,
+        load=load,
         repeated=repeated,
     )
 
@@ -636,13 +697,16 @@ def execute_spec(
 ) -> list[RunResult]:
     """Run one cell, and repeat it with half the users per generator if needed.
 
-    A load generator whose peak receive rate exceeds half of
-    `LINK_BYTES_PER_S` may have limited the run. The repeat uses half the
+    A load generator whose sustained CPU use or sustained receive rate passes
+    `SATURATION_LIMIT` may have limited the run. The repeat uses half the
     users per generator, on twice the generators. When the hosts file holds too
     few generators for that, the shortfall is logged and only the first run
-    stays. A run that stays with such a peak gets a `LINK_LIMITED_FILE`, and
-    so does a repeat whose own peak is still that high. A repeat directory of
-    an earlier pass moves out of the results first with `_discard`.
+    stays. A run that stays above the limit gets a `CLIENT_LIMITED_FILE` that
+    names the resource, and so does a repeat that is still above it. A run
+    with fewer generators than `USERS_PER_GENERATOR` asks for is client
+    limited too. It names the resource above the limit, or `cpu` when none is.
+    A repeat directory of an earlier pass moves out of the results first with
+    `_discard`.
     """
     _discard(settings, f"{spec.name}-repeat")
     available = len(settings.hosts.generators)
@@ -662,36 +726,41 @@ def execute_spec(
         spec, spec.name, generators, settings, runner, False, clock
     )
     results = [first]
-    peak = first.peak_rx_bytes_per_s
-    if peak is None or peak <= LINK_BYTES_PER_S / 2:
+    resource = limiting_resource(first.load)
+    if resource is None:
+        if generators < needed:
+            _mark_client_limited(first.directory, "cpu")
         return results
     half = math.ceil(first.users_per_generator / 2)
     wanted = math.ceil(spec.users / half)
     if half == first.users_per_generator or wanted > available:
         LOGGER.warning(
-            "run %s: peak receive rate %.3g B/s exceeds half the link; a "
-            "repeat with %d users per generator needs %d generators and %d "
-            "are available; keeping the first run",
+            "run %s: sustained %s of the generator is above %.2f; a repeat "
+            "with %d users per generator needs %d generators and %d are "
+            "available; keeping the first run",
             spec.name,
-            peak,
+            resource,
+            SATURATION_LIMIT,
             half,
             wanted,
             available,
         )
-        (first.directory / LINK_LIMITED_FILE).touch()
+        _mark_client_limited(first.directory, resource)
         return results
     LOGGER.info(
-        "run %s: repeating with %d users per generator", spec.name, half
+        "run %s: sustained %s of the generator is above %.2f; repeating with "
+        "%d users per generator",
+        spec.name,
+        resource,
+        SATURATION_LIMIT,
+        half,
     )
     repeat = execute_run(
         spec, f"{spec.name}-repeat", wanted, settings, runner, True, clock
     )
     results.append(repeat)
-    if (
-        repeat.peak_rx_bytes_per_s is not None
-        and repeat.peak_rx_bytes_per_s > LINK_BYTES_PER_S / 2
-    ):
-        (repeat.directory / LINK_LIMITED_FILE).touch()
+    if (resource := limiting_resource(repeat.load)) is not None:
+        _mark_client_limited(repeat.directory, resource)
     return results
 
 

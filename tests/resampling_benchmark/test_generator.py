@@ -308,6 +308,7 @@ def test_users_of_the_server_method_write_rows_against_a_live_server(
     header = read_header(out)
     assert header["run"] == "unit-run"
     assert header["repeated"] == "false"
+    assert float(header["start_at"]) == settings.start_at
 
 
 @pytest.mark.network

@@ -48,6 +48,14 @@ REQUEST_TIMEOUT_S = 180.0
 LINK_BYTES_PER_S = 12.5e9 / 8
 """Receive rate of a load generator link of 12.5 Gbps, in bytes per second."""
 
+SATURATION_WINDOW_S = 10
+"""Seconds of the rolling mean that measures the sustained CPU use and the
+sustained receive rate of a load generator."""
+
+SATURATION_LIMIT = 0.5
+"""Fraction of its CPU or its link above which a load generator may limit a
+run."""
+
 STATUS_OK = "ok"
 STATUS_TIMEOUT = "timeout"
 MAX_ERROR_DETAIL = 48
@@ -450,6 +458,7 @@ def run_generator(config: GeneratorConfig, out: Path) -> int:
         users_on_generator=config.users,
         processes=config.processes,
         repeated="true" if config.repeated else "false",
+        start_at=config.start_at,
     )
     lock = threading.Lock()
     rows = 0

@@ -18,13 +18,15 @@ import pandas as pd
 from resampling_benchmark.load.generator import (
     LINK_BYTES_PER_S,
     REQUEST_TIMEOUT_S,
+    SATURATION_WINDOW_S,
     STATUS_OK,
 )
+from resampling_benchmark.load.monitor import SAMPLE_INTERVAL_S
 from tszbench.csvmeta import CsvWriter, read_header, run_metadata
 from tszbench.recordings import RecordingSpec, resolve
 from tszbench.schemas import (
+    CLIENT_LIMITED_FILE,
     GENERATOR_MONITOR_PATTERN,
-    LINK_LIMITED_FILE,
     METHODS,
     NOT_RUN_FILE,
     REQUESTS_PATTERN,
@@ -55,8 +57,9 @@ class RunFiles:
         generator_monitors: Monitor CSVs of the load generators.
         server_metadata: JSON file with the run metadata of the server, or
             None when the run has none.
-        link_limited: True when the run directory holds a
-            `tszbench.schemas.LINK_LIMITED_FILE`.
+        client_limit: The resource in the run directory's
+            `tszbench.schemas.CLIENT_LIMITED_FILE`, or an empty string when
+            the run has none.
         not_run: True for the directory of a run that was skipped. It holds a
             `tszbench.schemas.NOT_RUN_FILE` and no request CSV.
     """
@@ -66,7 +69,7 @@ class RunFiles:
     server_monitors: tuple[Path, ...]
     generator_monitors: tuple[Path, ...]
     server_metadata: Path | None = None
-    link_limited: bool = False
+    client_limit: str = ""
     not_run: bool = False
 
 
@@ -106,10 +109,15 @@ def find_runs(root: Path) -> list[RunFiles]:
                     if (directory / SERVER_METADATA_FILE).is_file()
                     else None
                 ),
-                link_limited=(directory / LINK_LIMITED_FILE).exists(),
+                client_limit=_client_limit(directory),
             )
         )
     return runs
+
+
+def _client_limit(directory: Path) -> str:
+    marker = directory / CLIENT_LIMITED_FILE
+    return marker.read_text().strip() if marker.exists() else ""
 
 
 def read_requests(path: Path) -> Any:
@@ -174,6 +182,88 @@ def _monitor_peak(paths: Sequence[Path], column: str) -> float | None:
             value = float(frame[column].max())
             peak = value if peak is None else max(peak, value)
     return peak
+
+
+def measured_span(paths: Sequence[Path]) -> tuple[float, float] | None:
+    """Return the Unix times that bound the measured part of a run.
+
+    The measured part starts at the first measured dispatch of any generator
+    and ends at the last measured response. Each request CSV gives its
+    dispatch times from the `start_at` of its header.
+
+    Args:
+        paths: Request CSVs of one run.
+
+    Returns:
+        The start and the end, or None when no CSV has a `start_at` and a
+        measured request that was sent.
+    """
+    starts: list[float] = []
+    ends: list[float] = []
+    for path in paths:
+        origin = read_header(path).get("start_at")
+        if origin is None:
+            continue
+        measured = measured_requests(read_requests(path))
+        dispatched = measured["dispatch_s"].dropna()
+        finished = (measured["dispatch_s"] + measured["seconds"]).dropna()
+        if dispatched.empty or finished.empty:
+            continue
+        starts.append(float(origin) + float(dispatched.min()))
+        ends.append(float(origin) + float(finished.max()))
+    if not starts:
+        return None
+    return min(starts), max(ends)
+
+
+def monitor_samples(path: Path, column: str, span: tuple[float, float]) -> Any:
+    """Return the values of a monitor column over the samples of a span.
+
+    A sample at `time_s` covers the `SAMPLE_INTERVAL_S` before it. A sample
+    counts when that interval overlaps the span.
+
+    Args:
+        path: Monitor CSV.
+        column: Column of `tszbench.schemas.MONITOR`.
+        span: Start and end in Unix seconds.
+    """
+    frame = pd.read_csv(path, comment="#")
+    inside = frame[
+        (frame["time_s"] > span[0])
+        & (frame["time_s"] - SAMPLE_INTERVAL_S < span[1])
+    ]
+    return inside[column].to_numpy(dtype=float)
+
+
+def mean_over_span(
+    path: Path, column: str, span: tuple[float, float]
+) -> float | None:
+    """Return the mean of a monitor column over a span, or None without samples."""
+    values = monitor_samples(path, column, span)
+    return float(values.mean()) if values.size else None
+
+
+def sustained_mean(
+    path: Path,
+    column: str,
+    span: tuple[float, float],
+    window_s: int = SATURATION_WINDOW_S,
+) -> float | None:
+    """Return the highest rolling mean of a monitor column over a span.
+
+    The mean covers `window_s` consecutive samples. A span with fewer samples
+    gives the mean of all of them.
+
+    Returns:
+        The value, or None when the span holds no sample.
+    """
+    values = monitor_samples(path, column, span)
+    if values.size == 0:
+        return None
+    if values.size <= window_s:
+        return float(values.mean())
+    sums = np.convolve(values, np.ones(window_s), mode="valid")
+    return float(sums.max() / window_s)
 
 
 def not_run_row(run: str) -> dict[str, object]:
@@ -269,7 +359,7 @@ def summarize_run(
             if read_header(files.requests[0]).get("repeated") == TRUE
             else "false"
         ),
-        "link_limited": TRUE if files.link_limited else "false",
+        "link_limited": TRUE if files.client_limit else "false",
         "not_run": "false",
     }
     if total:

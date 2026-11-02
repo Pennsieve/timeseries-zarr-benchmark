@@ -35,6 +35,8 @@ SUBSET_KINDS = tuple(f"channels{count}" for count in SUBSET_CHANNELS)
 READ_KINDS = ("one", *SUBSET_KINDS, "all")
 """Values of `read_kind`. `one` reads one channel and `all` reads every channel."""
 METHODS = ("server", "precomputed")
+CLIENT_LIMITS = ("cpu", "link")
+"""Values of the resource that limits a client limited run."""
 
 GENERATION = ("recording", "format", "seconds", "bytes", "objects")
 """One row per file written by `generate`."""
@@ -111,7 +113,8 @@ RESAMPLING_REQUESTS = (
     "read_seconds",
     "reduce_seconds",
 )
-"""One row per request. `dispatch_s` counts from the start of the run. `seconds`
+"""One row per request. `dispatch_s` counts from the start of the run, which the
+header key `start_at` gives in Unix seconds. `seconds`
 runs from dispatch to the decoded array. `bytes` is what the user received.
 `status` is `ok`, `timeout`, or `error:<detail>`. `level` is the level read, 0
 for raw. `read_seconds` and `reduce_seconds` split the time spent reading S3 and
@@ -246,10 +249,10 @@ COMPLETE_FILE = "complete"
 """Empty file in a run directory, written after every generator of the run
 exits with status 0."""
 
-LINK_LIMITED_FILE = "link-limited"
-"""Empty file inside a run directory, written when the peak receive rate of a
-generator passed half its link and no repeat with fewer users per generator
-could run."""
+CLIENT_LIMITED_FILE = "client-limited"
+"""File inside a run directory, written when the load generators may have
+limited the run and no repeat with fewer users per generator could replace it.
+It holds the limiting resource, `cpu` or `link`."""
 
 NOT_RUN_FILE = "not-run"
 """File inside the directory of a run that the orchestrator skipped. It holds
