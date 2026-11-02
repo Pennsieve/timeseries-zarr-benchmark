@@ -228,6 +228,25 @@ def test_an_error_after_half_a_second_counts_as_the_timeout(
     assert row["failure_rate"] == pytest.approx(0.5)
 
 
+def test_a_connection_error_that_returns_at_once_counts_as_the_timeout(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "raw" / "server-S1-10-2"
+    write_requests(
+        directory / "requests-0.csv",
+        [
+            request_row(0, seconds=1.0),
+            request_row(1, seconds=0.001, status="error:RemoteProtocolError"),
+            request_row(2, seconds=0.002, status="error:ReadError"),
+        ],
+    )
+    row = summarize_run(find_runs(directory.parent)[0], lookup)
+    seconds = [1.0, REQUEST_TIMEOUT_S, REQUEST_TIMEOUT_S]
+    assert row["failures"] == 2
+    assert row["median_s"] == pytest.approx(REQUEST_TIMEOUT_S)
+    assert row["p95_s"] == pytest.approx(np.percentile(seconds, 95))
+
+
 def test_a_run_without_failures_keeps_the_seconds_of_its_requests(
     tmp_path: Path,
 ) -> None:
