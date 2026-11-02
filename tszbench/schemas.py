@@ -158,8 +158,10 @@ MONITOR = (
     "cpu_percent",
     "rx_bytes_per_s",
     "tx_bytes_per_s",
+    "memory_percent",
 )
-"""One row per host per second during a resampling benchmark run."""
+"""One row per host per second during a resampling benchmark run.
+`memory_percent` is the memory in use as a percent of the host memory."""
 
 CHECK = (
     "recording",

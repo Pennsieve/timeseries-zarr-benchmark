@@ -1,7 +1,7 @@
 """Host monitor of the resampling benchmark: `python -m resampling_benchmark.load.monitor`.
 
-Samples CPU use and network throughput once per second from `/proc`. Linux
-only.
+Samples CPU use, memory use, and network throughput once per second from
+`/proc`. Linux only.
 """
 
 import argparse
@@ -20,6 +20,7 @@ from tszbench.schemas import MONITOR
 ROLES = ("server", "generator")
 PROC_STAT = Path("/proc/stat")
 PROC_NET_DEV = Path("/proc/net/dev")
+PROC_MEMINFO = Path("/proc/meminfo")
 SAMPLE_INTERVAL_S = 1.0
 LOOPBACK = "lo"
 CPU_TOTAL_FIELDS = 8
@@ -77,6 +78,26 @@ def read_network(path: Path) -> tuple[int, int]:
     return received, sent
 
 
+def read_memory_percent(path: Path) -> float:
+    """Return the memory in use as a percent of `MemTotal`.
+
+    Memory in use is `MemTotal` minus `MemAvailable`.
+
+    Raises:
+        ValueError: The file has no `MemTotal` or `MemAvailable` line, or
+            `MemTotal` is zero.
+    """
+    kilobytes: dict[str, int] = {}
+    for line in path.read_text().splitlines():
+        name, _, rest = line.partition(":")
+        if name in ("MemTotal", "MemAvailable") and rest.split():
+            kilobytes[name] = int(rest.split()[0])
+    if len(kilobytes) != 2 or kilobytes["MemTotal"] <= 0:
+        raise ValueError(f"{path}: no MemTotal and MemAvailable lines")
+    used = kilobytes["MemTotal"] - kilobytes["MemAvailable"]
+    return 100.0 * used / kilobytes["MemTotal"]
+
+
 def read_counters(stat: Path = PROC_STAT, net: Path = PROC_NET_DEV) -> Reading:
     """Read the CPU and network counters."""
     total, idle = read_cpu(stat)
@@ -112,6 +133,7 @@ def monitor(
     interval: float = SAMPLE_INTERVAL_S,
     stat: Path = PROC_STAT,
     net: Path = PROC_NET_DEV,
+    meminfo: Path = PROC_MEMINFO,
     host: str | None = None,
     clock: Callable[[], float] = time.time,
     max_samples: int | None = None,
@@ -126,6 +148,7 @@ def monitor(
         interval: Seconds between samples.
         stat: Path of `/proc/stat`.
         net: Path of `/proc/net/dev`.
+        meminfo: Path of `/proc/meminfo`.
         host: Host name, default the local name.
         clock: Source of `time_s`, Unix seconds.
         max_samples: Stop after this many rows, default no limit.
@@ -150,6 +173,7 @@ def monitor(
                 "cpu_percent": cpu,
                 "rx_bytes_per_s": rx,
                 "tx_bytes_per_s": tx,
+                "memory_percent": read_memory_percent(meminfo),
             }
         )
         previous, previous_time = current, now
@@ -163,7 +187,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the command line."""
     parser = argparse.ArgumentParser(
         prog="python -m resampling_benchmark.load.monitor",
-        description="Sample CPU and network use once per second until stopped.",
+        description="Sample CPU, memory, and network use once per second until stopped.",
     )
     parser.add_argument("--run", required=True)
     parser.add_argument("--role", choices=ROLES, required=True)
@@ -176,10 +200,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run until SIGINT or SIGTERM.
 
     Returns:
-        0 after a stop, 1 when `/proc` has no CPU or network counters.
+        0 after a stop, 1 when `/proc` has no CPU, memory, or network
+        counters.
     """
     arguments = parse_arguments(argv)
-    if not (PROC_STAT.exists() and PROC_NET_DEV.exists()):
+    if not all(
+        path.exists() for path in (PROC_STAT, PROC_NET_DEV, PROC_MEMINFO)
+    ):
         print(
             "resampling_benchmark.load.monitor: needs /proc, which only Linux has"
         )
