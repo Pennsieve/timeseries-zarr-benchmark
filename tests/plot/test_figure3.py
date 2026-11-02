@@ -200,6 +200,17 @@ def test_figure3_caption_counts_the_client_limited_runs(runs, tmp_path):
     assert "ring" not in figure3(runs, tmp_path).caption
 
 
+def test_figure3_caption_states_the_cap_of_users_per_generator(runs, tmp_path):
+    changed = mark_client_limited(runs, "precomputed", "R3", 600, 1000, "cpu")
+    caption = figure3(changed, tmp_path).caption
+    assert (
+        "passed half its capacity, or the run put more users on a load "
+        "generator than the cap of 100 for the server method or 12 for the "
+        "precomputed method, and no repeat with fewer users per generator "
+        "replaced the run."
+    ) in caption
+
+
 def test_figure3_caption_states_the_s3_rates_of_the_client_limited_runs(
     runs, tmp_path
 ):

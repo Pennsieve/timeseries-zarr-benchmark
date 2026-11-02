@@ -168,7 +168,9 @@ bytes of every measured request over the measured seconds.
 `repeated` is true for a run repeated with half the users per generator.
 `client_limited` is true for a run that the load generators may have limited
 and that no repeat replaced. `client_limit` names the resource, `cpu` or
-`link`, and is empty for a run that is not client limited. `not_run` is true
+`link`, and is empty for a run that is not client limited. A run with fewer load
+generators than its users per generator cap asks for is client limited and reads
+`cpu`, even when neither sustained measure passed its limit. `not_run` is true
 for a run that the orchestrator skipped because a smaller user count of the
 same method, recording, and window failed. Such a row holds the method,
 recording, window, and users, and no statistics."""

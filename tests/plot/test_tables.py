@@ -180,7 +180,11 @@ def test_table3_marks_a_client_limited_run_in_the_cell_and_the_frame(runs):
     frame = table.frame.set_index("window_s")
     assert bool(frame.loc[600, "users_10_client"]) is True
     assert bool(frame.loc[600, "users_1_client"]) is False
-    assert "A cell ends with (client) where" in table.caption
+    assert "A cell ends with (client) where, in a run, " in table.caption
+    assert (
+        "or the run put more users on a load generator than the cap of 100 "
+        "for the server method or 12 for the precomputed method"
+    ) in table.caption
 
 
 def test_table3_has_no_client_mark_without_a_client_limited_run(runs):

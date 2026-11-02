@@ -10,6 +10,7 @@ import pandas as pd
 from plot.data import (
     NoDataError,
     Output,
+    client_limit_condition,
     client_limited,
     count_noun,
     format_bytes,
@@ -427,10 +428,9 @@ def table3(runs: Any, recording: str = "R3") -> Table:
                 else ""
             )
             + (
-                f" A cell ends with{CLIENT_MARK} where the sustained CPU "
-                "use or receive rate of a load generator passed half its "
-                "capacity in a run and no repeat with fewer users per "
-                "generator replaced the run."
+                f" A cell ends with{CLIENT_MARK} where, in a run, "
+                f"{client_limit_condition()}, and no repeat with fewer users "
+                "per generator replaced the run."
                 if any(any(row) for row in marks)
                 else ""
             )

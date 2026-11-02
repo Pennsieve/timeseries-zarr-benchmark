@@ -15,6 +15,7 @@ import pandas as pd
 
 from format_benchmark.positions import MIN_READS_KEY, READ_BUDGET_KEY
 from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
+from resampling_benchmark.load.orchestrate import USERS_PER_GENERATOR
 from resampling_benchmark.summarize import FAILED_REQUEST_SECONDS_KEY
 from tszbench.csvmeta import read_header
 from tszbench.recordings import RECORDINGS
@@ -232,8 +233,9 @@ def client_limited(rows: Any) -> Any:
     """Return a boolean series that is true for the runs of `client_limited`.
 
     A run is client limited when the sustained CPU use or the sustained receive
-    rate of a load generator passed half its capacity and no repeat with fewer
-    users per generator replaced the run.
+    rate of a load generator passed half its capacity, or when it ran more users
+    per load generator than `USERS_PER_GENERATOR` allows for its method, and no
+    repeat with fewer users per generator replaced the run.
     """
     return as_bool(rows["client_limited"])
 
@@ -253,6 +255,22 @@ def without_not_run(rows: Any) -> Any:
     return rows[~not_run(rows)].reset_index(drop=True)
 
 
+def client_limit_condition() -> str:
+    """Return the clause that states when a run is client limited.
+
+    The clause names the cap of users per load generator of each method.
+    """
+    caps = " or ".join(
+        f"{cap} for the {method} method"
+        for method, cap in USERS_PER_GENERATOR.items()
+    )
+    return (
+        "the sustained CPU use or receive rate of a load generator passed "
+        "half its capacity, or the run put more users on a load generator "
+        f"than the cap of {caps}"
+    )
+
+
 def client_limited_sentence(rows: Any) -> str:
     """Return the caption sentence for the client-limited runs of rows.
 
@@ -263,14 +281,34 @@ def client_limited_sentence(rows: Any) -> str:
         return ""
     return (
         f" A ring marks {count_noun(count, 'client-limited run')}, in which "
-        "the sustained CPU use or receive rate of a load generator passed half "
-        "its capacity and no repeat with fewer users per generator replaced "
-        "the run."
+        f"{client_limit_condition()}, and no repeat with fewer users per "
+        "generator replaced the run."
     )
 
 
 S3_RATE_USERS = 1_000
 """User count of the precomputed runs whose S3 rates a caption states."""
+
+
+def s3_rate_parts(rows: Any) -> list[str]:
+    """Return the S3 rate of each client-limited precomputed run of 1000 users.
+
+    Each part names the window, and the parts follow the window order. A run
+    without both rates has no part.
+    """
+    chosen = rows[
+        client_limited(rows)
+        & (rows["method"] == "precomputed")
+        & (rows["users"] == S3_RATE_USERS)
+    ].sort_values("window_s")
+    return [
+        f"{format_sig(float(row['s3_requests_per_second']))} requests per "
+        f"second and {format_bytes(float(row['s3_bytes_per_second']))} per "
+        f"second ({window_label(float(row['window_s']))} window)"
+        for _, row in chosen.iterrows()
+        if pd.notna(row["s3_requests_per_second"])
+        and pd.notna(row["s3_bytes_per_second"])
+    ]
 
 
 def s3_rate_sentence(rows: Any) -> str:
@@ -280,19 +318,7 @@ def s3_rate_sentence(rows: Any) -> str:
     The sentence starts with a space and names each window. It is empty when
     no such run has both rates.
     """
-    chosen = rows[
-        client_limited(rows)
-        & (rows["method"] == "precomputed")
-        & (rows["users"] == S3_RATE_USERS)
-    ].sort_values("window_s")
-    parts = [
-        f"{format_sig(float(row['s3_requests_per_second']))} requests per "
-        f"second and {format_bytes(float(row['s3_bytes_per_second']))} per "
-        f"second ({window_label(float(row['window_s']))} window)"
-        for _, row in chosen.iterrows()
-        if pd.notna(row["s3_requests_per_second"])
-        and pd.notna(row["s3_bytes_per_second"])
-    ]
+    parts = s3_rate_parts(rows)
     if not parts:
         return ""
     return (
