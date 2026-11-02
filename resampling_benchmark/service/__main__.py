@@ -12,8 +12,9 @@ from resampling_benchmark.service.app import (
     ENV_RECORDINGS,
     ENV_S3_ENDPOINT_URL,
     ENV_S3_ROOT,
+    ENV_TASK_THREADS,
 )
-from resampling_benchmark.service.engine import DEFAULT_PROCESSES
+from resampling_benchmark.service.engine import DEFAULT_PROCESSES, TASK_THREADS
 from tszbench.recordings import RECORDINGS
 
 DEFAULT_PORT = 8000
@@ -60,6 +61,12 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="pool processes that read and reduce, one per vCPU by default",
     )
     parser.add_argument(
+        "--task-threads",
+        type=int,
+        default=int(os.environ.get(ENV_TASK_THREADS) or TASK_THREADS),
+        help="tasks each pool process runs at once",
+    )
+    parser.add_argument(
         "--s3-root",
         default=os.environ.get(ENV_S3_ROOT),
         help="bucket and prefix as bucket/prefix",
@@ -85,6 +92,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         os.environ[ENV_S3_ENDPOINT_URL] = arguments.s3_endpoint_url
     os.environ[ENV_RECORDINGS] = arguments.recordings
     os.environ[ENV_PROCESSES] = str(arguments.processes)
+    os.environ[ENV_TASK_THREADS] = str(arguments.task_threads)
     raise_open_file_limit()
     uvicorn.run(
         "resampling_benchmark.service.app:create_app",

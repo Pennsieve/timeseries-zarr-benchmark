@@ -1,11 +1,22 @@
+import os
 import resource
 
 import pytest
 
+from resampling_benchmark.service import __main__ as service_main
 from resampling_benchmark.service.__main__ import (
     OPEN_FILES_MINIMUM,
+    parse_arguments,
     raise_open_file_limit,
 )
+from resampling_benchmark.service.app import (
+    ENV_PROCESSES,
+    ENV_RECORDINGS,
+    ENV_S3_ENDPOINT_URL,
+    ENV_S3_ROOT,
+    ENV_TASK_THREADS,
+)
+from resampling_benchmark.service.engine import TASK_THREADS
 
 
 class FakeLimits:
@@ -54,3 +65,36 @@ def test_an_unlimited_soft_limit_stays(limits: FakeLimits) -> None:
     limits.limits = (resource.RLIM_INFINITY, resource.RLIM_INFINITY)
     assert raise_open_file_limit() == resource.RLIM_INFINITY
     assert limits.limits == (resource.RLIM_INFINITY, resource.RLIM_INFINITY)
+
+
+def test_task_threads_default_to_the_engine_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(ENV_TASK_THREADS, raising=False)
+    assert parse_arguments([]).task_threads == TASK_THREADS
+
+
+def test_task_threads_fall_back_to_the_environment_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(ENV_TASK_THREADS, "8")
+    assert parse_arguments([]).task_threads == 8
+    assert parse_arguments(["--task-threads", "4"]).task_threads == 4
+
+
+def test_main_exports_the_task_threads_to_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service_main.uvicorn, "run", lambda *a, **k: None)
+    monkeypatch.setattr(service_main, "raise_open_file_limit", lambda: 0)
+    for name in (
+        ENV_S3_ROOT,
+        ENV_S3_ENDPOINT_URL,
+        ENV_RECORDINGS,
+        ENV_PROCESSES,
+        ENV_TASK_THREADS,
+    ):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(name, "")
+    service_main.main(["--s3-root", "bucket/prefix", "--task-threads", "16"])
+    assert os.environ[ENV_TASK_THREADS] == "16"
