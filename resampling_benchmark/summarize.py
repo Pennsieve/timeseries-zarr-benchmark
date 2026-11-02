@@ -314,19 +314,19 @@ def sustained_load(
     span = measured_span(list(request_paths))
     if span is None:
         return None
-    cpu: list[float] = []
-    link: list[float] = []
+    busiest: list[float] = []
+    fullest: list[float] = []
     for path in monitor_paths:
         if not path.exists():
             continue
         busy = sustained_mean(path, "cpu_percent", span)
         received = sustained_mean(path, "rx_bytes_per_s", span)
         if busy is not None and received is not None:
-            cpu.append(busy / 100.0)
-            link.append(received / LINK_BYTES_PER_S)
-    if not cpu:
+            busiest.append(busy / 100.0)
+            fullest.append(received / LINK_BYTES_PER_S)
+    if not busiest:
         return None
-    return SustainedLoad(max(cpu), max(link))
+    return SustainedLoad(cpu=max(busiest), link=max(fullest))
 
 
 def generator_cpu_seconds(

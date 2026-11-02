@@ -6,7 +6,7 @@ from plot.figure4 import figure4, figure4_series
 from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
 from tests.plot.conftest import (
     FAILED_REQUEST_SECONDS,
-    mark_link_limited,
+    mark_client_limited,
     mark_not_run,
     ring_points,
 )
@@ -118,13 +118,25 @@ def test_figure4_caption_falls_back_to_the_request_timeout(runs, tmp_path):
     assert "count each failed request as at least 180 s." in caption
 
 
-def test_figure4_rings_a_link_limited_run(runs, tmp_path, capture):
+def test_figure4_rings_a_client_limited_run(runs, tmp_path, capture):
     saved = capture(module)
-    figure4(mark_link_limited(runs, "server", "R3", 600, 100), tmp_path)
+    figure4(mark_client_limited(runs, "server", "R3", 600, 100), tmp_path)
     assert len(ring_points(saved[0].axes)) == 1
 
 
-def test_figure4_draws_no_ring_without_a_link_limited_run(
+def test_figure4_labels_the_ring_client_limited_in_the_legend(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    figure4(
+        mark_client_limited(runs, "server", "R3", 600, 100, "cpu"), tmp_path
+    )
+    labels = [text.get_text() for text in saved[0].legends[0].get_texts()]
+    assert "client limited" in labels
+    assert not any("link" in label for label in labels)
+
+
+def test_figure4_draws_no_ring_without_a_client_limited_run(
     runs, tmp_path, capture
 ):
     saved = capture(module)
@@ -132,9 +144,11 @@ def test_figure4_draws_no_ring_without_a_link_limited_run(
     assert ring_points(saved[0].axes) == []
 
 
-def test_figure4_caption_counts_the_link_limited_runs(runs, tmp_path):
-    changed = mark_link_limited(runs, "server", "R3", 600, 100)
-    assert "A ring marks one run" in figure4(changed, tmp_path).caption
+def test_figure4_caption_counts_the_client_limited_runs(runs, tmp_path):
+    changed = mark_client_limited(runs, "server", "R3", 600, 100)
+    caption = figure4(changed, tmp_path).caption
+    assert "A ring marks one client-limited run" in caption
+    assert "S3 served" not in caption
 
 
 def test_figure4_draws_what_exists_when_a_recording_has_one_user_count(

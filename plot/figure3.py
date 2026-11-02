@@ -11,17 +11,18 @@ from matplotlib.lines import Line2D
 from plot.data import (
     NoDataError,
     Output,
+    client_limited,
+    client_limited_sentence,
     count_noun,
     failed_request_sentence,
-    link_limited,
-    link_limited_sentence,
+    s3_rate_sentence,
     select_runs,
     window_label,
     without_not_run,
 )
 from plot.style import (
+    CLIENT_LIMITED_MARKER,
     FAILED_MARKER,
-    LINK_LIMITED_MARKER,
     METHOD_COLORS,
     METHOD_LABELS,
     new_figure,
@@ -92,13 +93,13 @@ def _draw_method(axes: Any, rows: Any, method: str) -> None:
             markeredgecolor="black",
             markeredgewidth=0.6,
         )
-    limited = link_limited(rows)
+    limited = client_limited(rows)
     for axis, height in heights:
         axis.plot(
             rows.loc[limited, "users"],
             height[limited],
             linestyle="none",
-            marker=LINK_LIMITED_MARKER,
+            marker=CLIENT_LIMITED_MARKER,
             markersize=10,
             markerfacecolor="none",
             markeredgecolor="black",
@@ -116,8 +117,7 @@ def figure3(
     and the 5th to 95th percentile as a band. The bottom row shows requests
     per second. The server and the precomputed read are one line each. A run
     with a failure rate above 0 carries a distinct marker at its median. A
-    run that a load generator link may have limited has an open ring around
-    its point.
+    client-limited run has an open ring around its point.
 
     Args:
         runs: Data frame of `resampling-runs.csv`.
@@ -173,17 +173,17 @@ def figure3(
             label="run with failures",
         )
     )
-    if link_limited(series).any():
+    if client_limited(series).any():
         handles.append(
             Line2D(
                 [],
                 [],
                 linestyle="none",
-                marker=LINK_LIMITED_MARKER,
+                marker=CLIENT_LIMITED_MARKER,
                 markersize=10,
                 markerfacecolor="none",
                 markeredgecolor="black",
-                label="generator link limited",
+                label="client limited",
             )
         )
     figure.legend(
@@ -210,5 +210,6 @@ def _caption(runs: Any, series: Any, recording: str) -> str:
         "failure rate above 0. Both methods read from S3. The runs hold "
         f"{parts}, warm-up requests left out."
         f"{failed_request_sentence(runs, percentiles=True)}"
-        f"{link_limited_sentence(series)}"
+        f"{client_limited_sentence(series)}"
+        f"{s3_rate_sentence(series)}"
     )

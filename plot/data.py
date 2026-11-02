@@ -228,11 +228,12 @@ def select_runs(runs: Any) -> Any:
     return frame.reset_index(drop=True)
 
 
-def link_limited(rows: Any) -> Any:
-    """Return a boolean series that is true for the runs of `link_limited`.
+def client_limited(rows: Any) -> Any:
+    """Return a boolean series that is true for the runs of `client_limited`.
 
-    A run is link limited when a load generator received more than half of its
-    link and no repeat with fewer users per generator replaced the run.
+    A run is client limited when the sustained CPU use or the sustained receive
+    rate of a load generator passed half its capacity and no repeat with fewer
+    users per generator replaced the run.
     """
     return as_bool(rows["client_limited"])
 
@@ -252,18 +253,51 @@ def without_not_run(rows: Any) -> Any:
     return rows[~not_run(rows)].reset_index(drop=True)
 
 
-def link_limited_sentence(rows: Any) -> str:
-    """Return the caption sentence for the link limited runs of rows.
+def client_limited_sentence(rows: Any) -> str:
+    """Return the caption sentence for the client-limited runs of rows.
 
-    The sentence starts with a space. It is empty when no run is link limited.
+    The sentence starts with a space. It is empty when no run is client limited.
     """
-    count = int(link_limited(rows).sum())
+    count = int(client_limited(rows).sum())
     if not count:
         return ""
     return (
-        f" A ring marks {count_noun(count, 'run')} in which a load generator "
-        "received more than half of its link and no repeat with fewer users "
-        "per generator replaced the run."
+        f" A ring marks {count_noun(count, 'client-limited run')}, in which "
+        "the sustained CPU use or receive rate of a load generator passed half "
+        "its capacity and no repeat with fewer users per generator replaced "
+        "the run."
+    )
+
+
+S3_RATE_USERS = 1_000
+"""User count of the precomputed runs whose S3 rates a caption states."""
+
+
+def s3_rate_sentence(rows: Any) -> str:
+    """Return the caption sentence for the S3 rates of the load-test runs.
+
+    The runs are the client-limited precomputed runs of `S3_RATE_USERS` users.
+    The sentence starts with a space and names each window. It is empty when
+    no such run has both rates.
+    """
+    chosen = rows[
+        client_limited(rows)
+        & (rows["method"] == "precomputed")
+        & (rows["users"] == S3_RATE_USERS)
+    ].sort_values("window_s")
+    parts = [
+        f"{format_sig(float(row['s3_requests_per_second']))} requests per "
+        f"second and {format_bytes(float(row['s3_bytes_per_second']))} per "
+        f"second ({window_label(float(row['window_s']))} window)"
+        for _, row in chosen.iterrows()
+        if pd.notna(row["s3_requests_per_second"])
+        and pd.notna(row["s3_bytes_per_second"])
+    ]
+    if not parts:
+        return ""
+    return (
+        " S3 served the client-limited precomputed runs of "
+        f"{S3_RATE_USERS:,} users at {join_words(parts)}."
     )
 
 

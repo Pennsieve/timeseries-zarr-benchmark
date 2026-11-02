@@ -12,7 +12,7 @@ from plot.tables import (
     write_table,
 )
 from tests.plot.conftest import (
-    mark_link_limited,
+    mark_client_limited,
     mark_not_run,
     trim_reads,
 )
@@ -172,24 +172,24 @@ def test_table3_counts_no_requests_of_a_run_that_was_not_run(runs):
     assert "1,215 requests" in table3(changed).caption
 
 
-def test_table3_marks_a_link_limited_run_in_the_cell_and_the_frame(runs):
-    changed = mark_link_limited(runs, "precomputed", "R3", 600, 10)
+def test_table3_marks_a_client_limited_run_in_the_cell_and_the_frame(runs):
+    changed = mark_client_limited(runs, "precomputed", "R3", 600, 10, "cpu")
     table = table3(changed)
-    assert table.rows[1][2].endswith(" (link)")
-    assert not table.rows[1][1].endswith("(link)")
+    assert table.rows[1][2].endswith(" (client)")
+    assert not table.rows[1][1].endswith("(client)")
     frame = table.frame.set_index("window_s")
-    assert bool(frame.loc[600, "users_10_link"]) is True
-    assert bool(frame.loc[600, "users_1_link"]) is False
-    assert "A cell ends with (link) where" in table.caption
+    assert bool(frame.loc[600, "users_10_client"]) is True
+    assert bool(frame.loc[600, "users_1_client"]) is False
+    assert "A cell ends with (client) where" in table.caption
 
 
-def test_table3_has_no_link_mark_without_a_link_limited_run(runs):
+def test_table3_has_no_client_mark_without_a_client_limited_run(runs):
     table = table3(runs)
     assert not any(
-        cell.endswith("(link)") for row in table.rows for cell in row
+        cell.endswith("(client)") for row in table.rows for cell in row
     )
-    assert not table.frame.filter(like="_link").to_numpy().any()
-    assert "(link)" not in table.caption
+    assert not table.frame.filter(like="_client").to_numpy().any()
+    assert "(client)" not in table.caption
 
 
 def test_table3_leaves_a_missing_method_empty(runs):

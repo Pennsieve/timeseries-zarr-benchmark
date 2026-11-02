@@ -451,10 +451,15 @@ def trim_reads(frame, count: int):
     return frame[~(same & (frame["repeat"] >= count))]
 
 
-def mark_link_limited(
-    frame, method: str, recording: str, window: int, users: int
+def mark_client_limited(
+    frame,
+    method: str,
+    recording: str,
+    window: int,
+    users: int,
+    resource: str = "link",
 ):
-    """Return a copy of a runs frame with one run marked link limited."""
+    """Return a copy of a runs frame with one run marked client limited."""
     changed = frame.copy()
     mask = (
         (changed["method"] == method)
@@ -464,12 +469,12 @@ def mark_link_limited(
         & (changed["repeated"] == "false")
     )
     changed.loc[mask, "client_limited"] = "true"
-    changed.loc[mask, "client_limit"] = "link"
+    changed.loc[mask, "client_limit"] = resource
     return changed
 
 
 def ring_points(axes) -> list[tuple[float, float]]:
-    """Return the points of the open rings that mark link limited runs."""
+    """Return the points of the open rings that mark client-limited runs."""
     return [
         point
         for axis in axes
