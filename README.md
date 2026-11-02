@@ -88,6 +88,7 @@ The stages write these files to the results directory:
 | `resampling-raw/<run>/` | `python -m resampling_benchmark.load.orchestrate` |
 | `resampling-requests.csv`, `resampling-runs.csv` | `python -m resampling_benchmark.summarize` |
 | `resampling-check.csv` | `python -m resampling_benchmark.check` |
+| `calibration-server.csv`, `calibration-generator.csv` | `python -m resampling_benchmark.calibrate` |
 
 `python -m plot` reads these files and writes the figures, the tables,
 `methods.txt`, `captions.txt`, and `cost.txt`. Each figure reads one CSV.

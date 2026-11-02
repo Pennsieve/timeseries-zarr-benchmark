@@ -94,7 +94,8 @@ No resampling code is written for the benchmark. Both methods of the resampling 
 reduce to pixel columns with `MinMaxDownsampler` from tsdownsample 0.1.5.1. The
 resampling server is FastAPI under one uvicorn worker. Each request fans out over a
 process pool with one process per vCPU. Each pool process holds its own counting
-filesystem and its own open bundles.
+filesystem and its own open bundles, and runs up to `TASK_THREADS` tasks at once on
+threads. A calibration sweep over `--task-threads` on the resampling server fixes the value.
 
 One Python 3.12 environment holds every library, because hdmf-zarr 0.14 runs on
 zarr 3.4. It holds zarr, timeseries-zarr, tsdownsample, pynwb, h5py with hdf5plugin,
@@ -196,9 +197,11 @@ For each request the resampling server splits each channel into groups of whole 
 that span about one shard (4,194,304 samples). Each channel and group is one task on the
 process pool. A task reads its part of `raw` from S3 with the reader, trims it to its
 columns with `Samples.first`, reduces it with tsdownsample, and discards the samples.
-Memory stays near one group per pool process. There is no cache. Every request reads S3.
-The server records read seconds and reduce seconds apart for each request. When a client
-disconnects, the server cancels the tasks of its request that have not started.
+The server sends the tasks of a request to the pool in batches of at most `TASK_THREADS`
+tasks. Memory stays near `TASK_THREADS` groups per pool process. There is no cache. Every
+request reads S3. The server records read seconds and reduce seconds apart for each
+request. When a client disconnects, the server cancels the batches of its request that
+have not started.
 
 `MinMaxDownsampler` returns two sample indices per column, in sample order. It skips NaN
 samples. The server takes the smaller value as the minimum and the larger as the maximum.
@@ -226,7 +229,10 @@ are recorded and shown.
 
 Users are simulated in closed loop. Each user sends a request, waits for the full
 response, decodes it, and sends the next one at a new random start. A load generator runs
-at most 100 users. Each user sends one warm-up request, which is dropped, and 10 measured
+at most 100 server users, or the calibrated number of precomputed users
+(`USERS_PER_GENERATOR`). The calibration sweep picks the most precomputed users whose
+sustained CPU stays below half the generator's CPU and whose median stays within 10% of
+the 1-user median. Each user sends one warm-up request, which is dropped, and 10 measured
 requests. Users stop sending 5 min after the start of a run. A request that exceeds 180 s
 or returns an error (including S3 503 SlowDown) is a failure. Medians and percentiles
 count each failed request as 180 s, or as its own seconds when those are longer. At 12.5
@@ -236,19 +242,24 @@ server run, the orchestrator waits until the server has no task in flight.
 
 Per request the CSV records the method, window, start, user count, seconds from dispatch
 to the decoded array, bytes received, requests sent to S3, the level read, and status. Per
-run it records requests per second achieved and the failure rate. The server's CPU and
-network throughput are sampled once per second during every run, as is each load
-generator's network throughput. If a load generator exceeds half its link, the run is
-repeated with half the users per generator on twice the generators, and the repeat
-replaces it. A repeat that still passes half the link is marked link limited, as is a run
-with too few generators for a repeat.
+run it records requests per second achieved and the failure rate. It also records the
+client CPU-seconds per request, and the S3 requests and bytes per second that the
+measured requests drove. The server's CPU, memory, and network throughput are sampled once
+per second during every run, as are each load generator's CPU and network throughput. The
+orchestrator checks the highest 10 s mean (`SATURATION_WINDOW_S`) of CPU and of receive
+rate for each load generator, over the measured part of the run. If either passes half its
+capacity (`SATURATION_LIMIT`), the run is repeated with half the users per generator, and
+the repeat replaces it. A repeat that still passes the limit is marked client limited and
+names the resource, `cpu` or `link`, as is a run with too few generators for a repeat.
 
 Once per window and recording, the two methods must return equal arrays, with NaN equal
 to NaN. The check window gives every column the same whole number of level bins (samples
 at level 0) and starts on a bin edge at a whole microsecond. It is centered on the
 longest planted gap shorter than the window, so the gap channel takes part.
 
-R3 runs 1, 10, 100, and 1000 users at every window. R4 runs 1 and 100 users, and R1 and
+R3 runs 1, 10, 100, and 1000 users at every window. The precomputed runs of R3 at 1000
+users run on the 20 load generators, are marked client limited, and report the S3 requests
+and bytes per second that they drove. R4 runs 1 and 100 users, and R1 and
 R2 run 1 user, at every window. The user counts of a method, recording, and window run in
 ascending order. Once the median request of a run is a failure, the larger user counts of
 that method, recording, and window are not run, and the results mark them not run.
@@ -284,12 +295,13 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
 - Figure 3. The resampling benchmark on R3. One small plot per window. The x axis is the
   number of simultaneous users. The y axis is seconds per request, median with a p5 to p95
   band. One line for the server and one for the precomputed read. A cross at the median
-  marks a run with failures, and an open ring marks a link-limited run. A user count that
-  was not run has no point. A second row shows requests per second. R4 goes to the
-  supplement.
+  marks a run with failures, and an open ring marks a client-limited run. The precomputed
+  1000-user point carries the ring, and the caption states the S3 requests and bytes per
+  second of those runs. A user count that was not run has no point. A second row shows
+  requests per second. R4 goes to the supplement.
 - Figure 4. All four recordings on one plot. The x axis is raw bytes under the window. The
   y axis is median seconds per request. One line per method, drawn at 1 user and at 100
-  users, with the failure cross and the link-limited ring of Figure 3. R1 and R2 have the
+  users, with the failure cross and the client-limited ring of Figure 3. R1 and R2 have the
   1-user line only. This figure shows
   how each method's time depends on the raw bytes under the window.
 - Figure 5. Median seconds per read (upper row) and median bytes per read (lower row) at
@@ -305,15 +317,17 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
   window and user count on R3. A cell reads "fail" where the server run had failures and
   "fail (precomputed)" where only the precomputed run had failures. A cell reads "not
   run" where a run was not run after a failure at fewer users. A cell ends with
-  "(link)" where either run is link limited. The 10 s, 10 min, and 24 h rows are the
+  "(client)" where either run is client limited. The 10 s, 10 min, and 24 h rows are the
   page, overview, and whole-recording zooms of the manuscript's worked example.
 - Table 4. Median seconds per read of the TS-Zarr reader and of zarr-python on the raw
   arrays of the same bundle (the zarr-direct row), and their ratio, per recording, store,
   read kind, and window.
 - Methods sentences: the upload rate per format, the median seconds and requests of the
   timed open per format and store, the combinations that stopped at the read budget, the
-  runs not run, the generation seconds of R3-1h, R3, and R4, the equality check, and the
-  versions of timeseries-zarr and tsdownsample with the instance types.
+  runs not run, the client CPU-seconds of one precomputed request, the S3 requests and
+  bytes per second of the precomputed 1000-user runs, the generation seconds of R3-1h, R3,
+  and R4, the equality check, and the versions of timeseries-zarr and tsdownsample with
+  the instance types.
 
 Every figure reads one CSV and nothing else. Captions name the statistic, the number of
 reads or requests, and the store. Captions of the format benchmark state the read budget,
