@@ -272,15 +272,31 @@ def test_table4_has_one_row_per_recording_store_read_kind_and_window(
     format_benchmark,
 ):
     table = table4(format_benchmark)
-    assert len(table.frame) == 2 * 3 * 2 * 3
+    assert len(table.frame) == 2 * 3 * 2 * 3 + 3 * 3
     assert list(table.frame["recording"])[:1] == ["R1-1h"]
     assert table.rows[0][:4] == ("R1-1h", "local disk", "one channel", "1 s")
     assert len(table.rows[0]) == len(table.headers)
 
 
+def test_table4_labels_and_orders_the_subset_read_kinds(format_benchmark):
+    table = table4(format_benchmark)
+    labels = [
+        row[2]
+        for row in table.rows
+        if row[:2] == ("R3-1h", "local disk") and row[3] == "10 s"
+    ]
+    assert labels == [
+        "one channel",
+        "4 channels",
+        "16 channels",
+        "64 channels",
+        "all channels",
+    ]
+
+
 def test_table4_caption_counts_the_reads_of_both_formats(format_benchmark):
     caption = table4(format_benchmark).caption
-    assert "1,512 reads" in caption
+    assert "1,890 reads" in caption
     assert caption.isascii()
 
 

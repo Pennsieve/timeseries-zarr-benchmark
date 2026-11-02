@@ -36,7 +36,7 @@ HDF5_CHUNK_CACHE_BYTES = 0
 whole chunk of R1. A later read of that chunk then sends no request."""
 
 STACK_WORKERS = 32
-"""Threads of an all-channel read of TS-Zarr and of `zarr-direct`."""
+"""Threads of a multi-channel read of TS-Zarr and of `zarr-direct`."""
 
 SampleArray = npt.NDArray[Any]
 
@@ -69,14 +69,16 @@ class Reader(abc.ABC):
 
     @abc.abstractmethod
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> SampleArray:
         """Return the samples of the window `[start_us, end_us)`.
 
         The window is in microseconds from sample 0. One channel gives shape
-        `(samples,)`, and a channel of None reads every channel and gives
-        `(samples, channels)`. The samples are float32 microvolts. Every
-        reader returns the samples of `tszbench.recordings.sample_range`.
+        `(samples,)`. A range of contiguous channels with step 1 gives
+        `(samples, len(channel))` in range order. A channel of None reads
+        every channel and gives `(samples, channels)`. The samples are float32
+        microvolts. Every reader returns the samples of
+        `tszbench.recordings.sample_range`.
         """
 
     def close(self) -> None:  # noqa: B027
@@ -88,11 +90,13 @@ class Reader(abc.ABC):
 
 
 def _slice(
-    data: Any, first: int, stop: int, channel: int | None
+    data: Any, first: int, stop: int, channel: int | range | None
 ) -> SampleArray:
     """Return one selection of a `(samples, channels)` dataset."""
     if channel is None:
         return np.asarray(data[first:stop, :])
+    if isinstance(channel, range):
+        return np.asarray(data[first:stop, channel.start : channel.stop])
     return np.asarray(data[first:stop, channel])
 
 
@@ -114,7 +118,7 @@ class EdfReader(Reader):
         self._reader = EdfRangeReader(self._fs, self._path)
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> SampleArray:
         """Return the window, as `Reader.read` describes."""
         return self._reader.read(start_us, end_us, channel)
@@ -155,7 +159,7 @@ class NwbHdf5Reader(Reader):
             raise
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> SampleArray:
         """Return the window, as `Reader.read` describes."""
         first, stop = self._samples(start_us, end_us)
@@ -182,7 +186,7 @@ class NwbZarrReader(Reader):
         self._data = nwb.acquisition[SERIES_NAME].data
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> SampleArray:
         """Return the window, as `Reader.read` describes."""
         first, stop = self._samples(start_us, end_us)
@@ -196,11 +200,11 @@ class NwbZarrReader(Reader):
 class TszarrReader(Reader):
     """`tszarr`: the timeseries-zarr reader.
 
-    A one-channel read is `ContinuousChannel.read`. An all-channel read is
-    `Bundle.stack` with `STACK_WORKERS` threads, transposed to
-    `(samples, channels)`. The reader returns every sample that overlaps the
-    window, so the result can start one sample early. `read` drops that sample
-    before it returns.
+    A one-channel read is `ContinuousChannel.read`. A read of several channels
+    is `Bundle.stack` with `STACK_WORKERS` threads over the channels of the
+    read, transposed to `(samples, channels)`. The reader returns every sample
+    that overlaps the window, so the result can start one sample early. `read`
+    drops that sample before it returns.
     """
 
     file_format = "tszarr"
@@ -211,13 +215,18 @@ class TszarrReader(Reader):
         self._keys = sorted(self._bundle.continuous)
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> SampleArray:
         """Return the window, as `Reader.read` describes."""
         first, stop = self._samples(start_us, end_us)
-        if channel is None:
+        if channel is None or isinstance(channel, range):
+            keys = (
+                self._keys
+                if channel is None
+                else self._keys[channel.start : channel.stop]
+            )
             stack = self._bundle.stack(
-                self._keys, start_us, end_us, max_workers=STACK_WORKERS
+                keys, start_us, end_us, max_workers=STACK_WORKERS
             )
             skip = _skip(stack.first, first)
             return np.asarray(stack.values[:, skip : skip + stop - first].T)
@@ -248,8 +257,8 @@ def _skip(returned_first: int, first: int) -> int:
 class ZarrDirectReader(Reader):
     """`zarr-direct`: the `raw` arrays of a TS-Zarr bundle, sliced directly.
 
-    The row shows what the TS-Zarr reader adds. An all-channel read slices
-    every channel on a pool of `STACK_WORKERS` threads.
+    The row shows what the TS-Zarr reader adds. A read of several channels
+    slices each channel on a pool of `STACK_WORKERS` threads.
     """
 
     file_format = "zarr-direct"
@@ -262,14 +271,19 @@ class ZarrDirectReader(Reader):
         self._pool = ThreadPoolExecutor(max_workers=STACK_WORKERS)
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> SampleArray:
         """Return the window, as `Reader.read` describes."""
         first, stop = self._samples(start_us, end_us)
-        if channel is not None:
+        if channel is not None and not isinstance(channel, range):
             return np.asarray(self._arrays[channel][first:stop])
+        arrays = (
+            self._arrays
+            if channel is None
+            else self._arrays[channel.start : channel.stop]
+        )
         columns = self._pool.map(
-            lambda array: np.asarray(array[first:stop]), self._arrays
+            lambda array: np.asarray(array[first:stop]), arrays
         )
         return np.stack(list(columns), axis=1)
 
@@ -290,7 +304,7 @@ class OverheadReader(Reader):
         """Fetch nothing. The object is the same for every read."""
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> SampleArray:
         """Fetch the object and return an empty array."""
         data = self._fs.cat_file(self._path)

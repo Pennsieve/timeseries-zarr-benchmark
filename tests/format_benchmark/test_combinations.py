@@ -9,6 +9,7 @@ from format_benchmark.combinations import (
     is_complete,
     parse_part,
     plan,
+    sort_key,
 )
 from format_benchmark.positions import WINDOWS_S
 from tszbench import schemas
@@ -279,3 +280,59 @@ def test_complete_parts_leaves_out_a_part_that_stopped_under_other_options(
     write_combination(whole, tmp_path, 100, 100)
     assert complete_parts(tmp_path, None, BUDGET_S, MIN_READS) == [early, whole]
     assert complete_parts(tmp_path, None, BUDGET_S * 2, MIN_READS) == [whole]
+
+
+def test_plan_measures_the_subset_kinds_at_ten_seconds_where_they_fit() -> None:
+    measured, skipped = plan(
+        ["R1", "R2", "R3"],
+        ["local"],
+        ["tszarr"],
+        schemas.READ_KINDS,
+        WINDOWS_S,
+    )
+    subset = {
+        (c.recording, c.read_kind, c.window_s)
+        for c in measured
+        if c.read_kind in schemas.SUBSET_KINDS
+    }
+    assert subset == {
+        ("R2", "channels4", 10),
+        ("R2", "channels16", 10),
+        ("R3", "channels4", 10),
+        ("R3", "channels16", 10),
+        ("R3", "channels64", 10),
+    }
+    reasons = {
+        (c.recording, c.read_kind, c.window_s): reason for c, reason in skipped
+    }
+    assert "does not fit recording R1" in reasons[("R1", "channels4", 10)]
+    assert "which has 32" in reasons[("R2", "channels64", 10)]
+    assert "only at windows of 10 s" in reasons[("R3", "channels4", 60)]
+
+
+def test_plan_skips_every_subset_read_of_the_overhead_row() -> None:
+    measured, skipped = plan(
+        ["R3"], ["local"], ["overhead"], schemas.READ_KINDS, WINDOWS_S
+    )
+    assert [(c.read_kind, c.window_s) for c in measured] == [("one", 1)]
+    assert {c.read_kind for c, _ in skipped} >= set(schemas.SUBSET_KINDS)
+
+
+def test_sort_key_orders_the_read_kinds_as_the_schema_does() -> None:
+    combinations = [
+        Combination("R3", "local", "tszarr", kind, 10)
+        for kind in reversed(schemas.READ_KINDS)
+    ]
+    assert [c.read_kind for c in sorted(combinations, key=sort_key)] == list(
+        schemas.READ_KINDS
+    )
+
+
+@pytest.mark.parametrize("kind", schemas.SUBSET_KINDS)
+def test_parse_part_round_trips_a_subset_stem(
+    tmp_path: Path, kind: str
+) -> None:
+    combination = Combination("R3", "s3", "nwb-zarr-channel", kind, 10)
+    assert combination.stem == f"s3-nwb-zarr-channel-{kind}-10s"
+    assert parse_part(combination.reads_path(tmp_path)) == combination
+    assert parse_part(combination.open_path(tmp_path)) is None

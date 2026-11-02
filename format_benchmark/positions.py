@@ -39,6 +39,9 @@ budget applies."""
 MAX_READ_BYTES = 8_000_000_000
 """A single read of float32 samples above this size is not measured."""
 
+SUBSET_WINDOWS_S = (10,)
+"""Windows at which the subset read kinds are measured."""
+
 FLOAT32_BYTES = 4
 
 OVERHEAD = "overhead"
@@ -50,7 +53,8 @@ class Position:
 
     Attributes:
         repeat: Index of the read within its combination, from 0.
-        channel: Channel of a one-channel read. An all-channel read ignores it.
+        channel: Channel of a one-channel read. A subset read derives the first
+            channel of its block from it. An all-channel read ignores it.
         start_us: Start of the window in whole microseconds from sample 0.
     """
 
@@ -124,9 +128,44 @@ def positions(
     return reads if max_repeats is None else reads[:max_repeats]
 
 
+def selection(
+    spec: RecordingSpec, read_kind: str, position: Position
+) -> int | range | None:
+    """Return the channels a read selects.
+
+    A one-channel read gives its channel and an all-channel read gives None. A
+    subset read gives a contiguous range of channels. The block starts at the
+    channel of the position, folded so that the block fits in the recording.
+    Every format reads the same block.
+
+    Raises:
+        ValueError: read_kind is not in `schemas.READ_KINDS`, or a subset read
+            is as wide as the recording or wider.
+    """
+    if read_kind not in schemas.READ_KINDS:
+        raise ValueError(
+            f"read kind {read_kind!r}: must be one of {schemas.READ_KINDS}"
+        )
+    if read_kind == "all":
+        return None
+    size = schemas.subset_size(read_kind)
+    if size is None:
+        return position.channel
+    if size >= spec.channels:
+        raise ValueError(
+            f"read kind {read_kind!r}: needs more than {size} channels, "
+            f"recording {spec.id!r} has {spec.channels}"
+        )
+    first = position.channel % (spec.channels - size + 1)
+    return range(first, first + size)
+
+
 def read_bytes(spec: RecordingSpec, read_kind: str, window_s: int) -> int:
     """Return the size of one read as float32 samples in bytes."""
-    channels = spec.channels if read_kind == "all" else 1
+    if read_kind == "all":
+        channels = spec.channels
+    else:
+        channels = schemas.subset_size(read_kind) or 1
     return window_s * spec.rate_hz * channels * FLOAT32_BYTES
 
 
@@ -137,7 +176,9 @@ def skip_reason(
 
     A combination is not measured when the recording lacks the format, the
     window is longer than the recording, or one read exceeds
-    `MAX_READ_BYTES`. The overhead row has no all-channel read.
+    `MAX_READ_BYTES`. The overhead row has no all-channel or subset read. A
+    subset read needs a window in `SUBSET_WINDOWS_S` and a recording with more
+    channels than the block.
 
     Raises:
         ValueError: A name is not in `schemas`, or window_s is not one of
@@ -154,11 +195,21 @@ def skip_reason(
     window_index(window_s)
     if file_format == "edf" and spec.edf_record_s is None:
         return f"recording {spec.id} has no EDF file"
-    if file_format == OVERHEAD and read_kind == "all":
+    size = schemas.subset_size(read_kind)
+    if file_format == OVERHEAD and (read_kind == "all" or size is not None):
         return "the overhead row reads one object"
+    if size is not None:
+        if window_s not in SUBSET_WINDOWS_S:
+            windows = ", ".join(str(window) for window in SUBSET_WINDOWS_S)
+            return f"subset reads are measured only at windows of {windows} s"
+        if size >= spec.channels:
+            return (
+                f"a block of {size} channels does not fit recording "
+                f"{spec.id}, which has {spec.channels}"
+            )
     if window_s * 1_000_000 > spec.duration_us:
         return f"window of {window_s} s is longer than recording {spec.id}"
-    size = read_bytes(spec, read_kind, window_s)
-    if size > MAX_READ_BYTES:
-        return f"one read is {size} bytes, above {MAX_READ_BYTES}"
+    nbytes = read_bytes(spec, read_kind, window_s)
+    if nbytes > MAX_READ_BYTES:
+        return f"one read is {nbytes} bytes, above {MAX_READ_BYTES}"
     return None

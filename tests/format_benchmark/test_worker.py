@@ -5,7 +5,7 @@ import pytest
 
 import format_benchmark.worker as worker
 from format_benchmark.combinations import Combination
-from format_benchmark.positions import positions
+from format_benchmark.positions import positions, selection
 from tests.format_benchmark.conftest import TINY_ID, TINY_SPEC
 from tszbench import schemas
 from tszbench.csvmeta import read_header, read_rows
@@ -15,6 +15,13 @@ WINDOW_S = 10
 REPEATS = 3
 PLANNED = 10
 """Planned reads of the budget tests."""
+
+TINY_KINDS = tuple(
+    kind
+    for kind in schemas.READ_KINDS
+    if (schemas.subset_size(kind) or 0) < TINY_SPEC.channels
+)
+"""Read kinds with a block narrower than `TINY_SPEC`."""
 
 
 class FakeClock:
@@ -38,7 +45,7 @@ class FakeReader:
         pass
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None
+        self, start_us: int, end_us: int, channel: int | range | None
     ) -> "np.ndarray[tuple[int], np.dtype[np.float64]]":
         self.clock.now += self.seconds
         return np.zeros(1)
@@ -96,13 +103,21 @@ def run_combination(
     return read_rows(reads_path), read_rows(open_path)
 
 
+def _first_channel(channel: int | range | None) -> int:
+    if channel is None:
+        return worker.ALL_CHANNELS
+    return channel.start if isinstance(channel, range) else channel
+
+
 @pytest.mark.usefixtures("tiny_recording")
 def test_the_worker_writes_one_row_per_read_and_one_open_row(
     store: str, roots: StoreRoots, tmp_path: Path
 ) -> None:
     planned = positions(TINY_SPEC, WINDOW_S, REPEATS)
     for file_format in schemas.FORMAT_ROWS:
-        for read_kind in schemas.READ_KINDS:
+        for read_kind in TINY_KINDS:
+            if file_format == "overhead" and read_kind in schemas.SUBSET_KINDS:
+                continue
             reads, opened = run_combination(
                 tmp_path, roots, store, file_format, read_kind
             )
@@ -116,11 +131,10 @@ def test_the_worker_writes_one_row_per_read_and_one_open_row(
             assert [int(row["start_us"]) for row in reads] == [
                 read.start_us for read in planned
             ], label
-            expected_channels = (
-                [-1] * REPEATS
-                if read_kind == "all"
-                else [read.channel for read in planned]
-            )
+            expected_channels = [
+                _first_channel(selection(TINY_SPEC, read_kind, read))
+                for read in planned
+            ]
             assert [int(row["channel"]) for row in reads] == expected_channels
             for row in reads:
                 assert row["recording"] == TINY_ID
@@ -139,13 +153,17 @@ def test_the_worker_writes_one_row_per_read_and_one_open_row(
 
 
 @pytest.mark.usefixtures("tiny_recording")
-@pytest.mark.parametrize("read_kind", ["one", "all"])
+@pytest.mark.parametrize("read_kind", ["one", "channels4", "all"])
 def test_samples_count_every_sample_over_every_channel(
     tmp_path: Path, tiny_root: Path, read_kind: str
 ) -> None:
     roots = StoreRoots(local=tiny_root, http="", s3="")
     rows_per_window = WINDOW_S * TINY_SPEC.rate_hz
-    channels = TINY_SPEC.channels if read_kind == "all" else 1
+    channels = {
+        "one": 1,
+        "channels4": 4,
+        "all": TINY_SPEC.channels,
+    }[read_kind]
     for file_format in schemas.FORMAT_ROWS:
         reads, _ = run_combination(
             tmp_path, roots, "local", file_format, read_kind
@@ -164,6 +182,24 @@ def test_samples_count_every_sample_over_every_channel(
             assert samples == [rows_per_window * channels] * REPEATS, (
                 file_format
             )
+
+
+@pytest.mark.usefixtures("tiny_recording")
+def test_a_subset_read_records_the_first_channel_of_its_block(
+    tmp_path: Path, tiny_root: Path
+) -> None:
+    roots = StoreRoots(local=tiny_root, http="", s3="")
+    planned = positions(TINY_SPEC, WINDOW_S, REPEATS)
+    blocks = [selection(TINY_SPEC, "channels4", read) for read in planned]
+    assert all(isinstance(block, range) for block in blocks)
+    for file_format in ("edf", "nwb-zarr-channel", "tszarr", "zarr-direct"):
+        reads, _ = run_combination(
+            tmp_path, roots, "local", file_format, "channels4"
+        )
+        assert [int(row["channel"]) for row in reads] == [
+            block.start for block in blocks if isinstance(block, range)
+        ]
+        assert {row["read_kind"] for row in reads} == {"channels4"}
 
 
 @pytest.mark.usefixtures("tiny_recording")

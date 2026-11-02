@@ -221,7 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--read-kinds",
         default=",".join(schemas.READ_KINDS),
-        help="Comma-separated read kinds, one and all. Default: both.",
+        help=(
+            "Comma-separated read kinds: one, channels4, channels16, "
+            "channels64, and all. Default: all five."
+        ),
     )
     parser.add_argument(
         "--windows",

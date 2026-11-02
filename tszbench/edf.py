@@ -492,30 +492,53 @@ class EdfRangeReader:
         )
 
     def read(
-        self, start_us: int, end_us: int, channel: int | None = None
+        self,
+        start_us: int,
+        end_us: int,
+        channel: int | range | None = None,
     ) -> npt.NDArray[np.float32]:
         """Return the samples of `tszbench.recordings.sample_range` in microvolts.
 
-        One channel gives a rank-1 array. `channel=None` gives every channel as
-        (samples, channels). A gap sample is NaN. The window is clipped to the
-        file. The requests run at once, as many as the filesystem allows.
+        One channel gives a rank-1 array. A range of channels gives
+        (samples, len(channel)) in range order. `channel=None` gives every
+        channel as (samples, channels). A gap sample is NaN. The window is
+        clipped to the file. The requests run at once, as many as the
+        filesystem allows.
 
         Raises:
-            ValueError: channel is not an index of a signal.
+            ValueError: channel is not an index of a signal, or a range is
+                empty, has a step other than 1, or leaves the signals.
         """
         header = self.header
         channels = len(header.labels)
-        if channel is not None and not 0 <= channel < channels:
+        if isinstance(channel, range):
+            if (
+                channel.step != 1
+                or len(channel) == 0
+                or not (channel.start >= 0 and channel.stop <= channels)
+            ):
+                raise ValueError(
+                    f"channels {channel}: must be a non-empty range with "
+                    f"step 1 inside [0, {channels})"
+                )
+        elif channel is not None and not 0 <= channel < channels:
             raise ValueError(f"channel {channel}: must be in [0, {channels})")
         per_record = header.samples_per_record[0]
         record_bytes = header.record_bytes
         first, stop = sample_range(start_us, end_us, round(self.rate_hz))
         first = max(first, 0)
         stop = min(stop, per_record * header.records)
-        columns = [channel] if channel is not None else list(range(channels))
+        columns: list[int]
+        if channel is None:
+            columns = list(range(channels))
+        elif isinstance(channel, range):
+            columns = list(channel)
+        else:
+            columns = [channel]
+        squeeze = channel is not None and not isinstance(channel, range)
         if stop <= first:
             empty = np.empty((0, len(columns)), dtype=np.float32)
-            return empty[:, 0] if channel is not None else empty
+            return empty[:, 0] if squeeze else empty
 
         first_record = first // per_record
         records = (stop - 1) // per_record - first_record + 1
@@ -524,9 +547,9 @@ class EdfRangeReader:
             count, length, stride, shift = 1, records * record_bytes, 0, 0
         else:
             count = records
-            length = _SAMPLE_BYTES * per_record
+            length = _SAMPLE_BYTES * per_record * len(columns)
             stride = record_bytes
-            shift = length * channel
+            shift = _SAMPLE_BYTES * per_record * columns[0]
         starts = base + shift + stride * np.arange(count, dtype=np.int64)
 
         segments = self._fetch(starts, length)
@@ -547,4 +570,4 @@ class EdfRangeReader:
         physical *= self._gain32[columns]
         physical += self._shift32[columns]
         physical[digital == self._digital_min[columns]] = np.nan
-        return physical[:, 0] if channel is not None else physical
+        return physical[:, 0] if squeeze else physical

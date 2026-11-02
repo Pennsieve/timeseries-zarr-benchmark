@@ -18,6 +18,7 @@ from plot.figure1 import figure1
 from plot.figure2 import figure2
 from plot.figure3 import figure3
 from plot.figure4 import figure4
+from plot.figure5 import figure5
 from plot.methods import write_methods
 from plot.tables import table1, table2, table3, table4, write_table
 from tszbench import schemas
@@ -53,7 +54,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--format-recording",
         default=DEFAULT_FORMAT_RECORDING,
-        help="recording of Figure 2 of the format benchmark",
+        help="recording of Figures 2 and 5 of the format benchmark",
     )
     parser.add_argument(
         "--prices",
@@ -73,8 +74,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Write every output that the CSVs in `--results` allow.
 
     An output whose CSV is absent, or whose CSV holds no rows for it, is
-    skipped with a message on standard error. Figures 2 and 3 are also written
-    for each other recording present, as `fig2-<id>` and `fig3-<id>`.
+    skipped with a message on standard error. Figures 2, 3, and 5 are also
+    written for each other recording present, as `fig2-<id>`, `fig3-<id>`, and
+    `fig5-<id>`.
 
     Table 1 needs no CSV and is always written. `methods.txt` holds the Methods
     sentences that the upload, open, read budget, generation, check, and header
@@ -134,6 +136,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 partial(figure3, runs, out, name, f"fig3-{name}"),
             )
         run("Figure 4", lambda: figure4(runs, out))
+    if format_benchmark is not None:
+        run(
+            "Figure 5",
+            lambda: figure5(format_benchmark, out, format_recording),
+        )
+        for name in _supplement(
+            format_benchmark["recording"], format_recording
+        ):
+            run(
+                f"Figure 5 of {name}",
+                partial(figure5, format_benchmark, out, name, f"fig5-{name}"),
+            )
     run("Table 1", lambda: write_table(table1(), out))
     if storage is not None:
         run("Table 2", lambda: write_table(table2(storage), out))

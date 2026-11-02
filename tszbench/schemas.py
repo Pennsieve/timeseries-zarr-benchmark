@@ -25,7 +25,15 @@ FORMAT_ROWS = (*READ_FORMATS, "zarr-direct", "overhead")
 with zarr-python and no reader. `overhead` reads a 1-byte object."""
 
 STORES = ("local", "http", "s3")
-READ_KINDS = ("one", "all")
+SUBSET_CHANNELS = (4, 16, 64)
+"""Block sizes of the subset reads. A subset read takes this many contiguous
+channels."""
+
+SUBSET_KINDS = tuple(f"channels{count}" for count in SUBSET_CHANNELS)
+"""Values of `read_kind` for the subset reads, one per entry of `SUBSET_CHANNELS`."""
+
+READ_KINDS = ("one", *SUBSET_KINDS, "all")
+"""Values of `read_kind`. `one` reads one channel and `all` reads every channel."""
 METHODS = ("server", "precomputed")
 
 GENERATION = ("recording", "format", "seconds", "bytes", "objects")
@@ -60,7 +68,8 @@ FORMAT_READS = (
     "requests",
     "samples",
 )
-"""One row per timed read. `channel` is -1 for an all-channel read. `bytes` and
+"""One row per timed read. `channel` is -1 for an all-channel read and the first
+channel of the block for a subset read. `bytes` and
 `requests` are what the store served for the read. `samples` counts samples
 returned over every channel read."""
 
@@ -263,3 +272,10 @@ def requests_file(generator: int) -> str:
 def generator_monitor_file(generator: int) -> str:
     """Return the name of the monitor CSV of one load generator of a run."""
     return f"monitor-generator-{generator}.csv"
+
+
+def subset_size(read_kind: str) -> int | None:
+    """Return the channels of a subset read kind, or None for `one` and `all`."""
+    if read_kind in SUBSET_KINDS:
+        return SUBSET_CHANNELS[SUBSET_KINDS.index(read_kind)]
+    return None

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from format_benchmark.positions import SUBSET_WINDOWS_S
 from plot.data import load_csv
 from tszbench.csvmeta import CsvWriter
 from tszbench.recordings import RECORDINGS
@@ -20,6 +21,7 @@ from tszbench.schemas import (
     STORES,
     UPLOAD,
     generation_file,
+    subset_size,
     upload_file,
 )
 
@@ -35,6 +37,8 @@ FAILED_REQUEST_SECONDS = 150
 STOPPED_READS = 7
 """Reads of a combination in `write_open` that stopped at the read budget."""
 WINDOWS = (1, 10, 60)
+SUBSET_RECORDING = "R3-1h"
+"""The only recording of the fixture with subset reads. R1-1h has one channel."""
 REPEATS = 21
 """Reads per combination. The median of 21 reads is the 11th, 10 steps above the first."""
 SPREAD = 0.01
@@ -47,8 +51,10 @@ def base_seconds(
 ) -> float:
     format_index = FORMAT_ROWS.index(file_format) + 1
     store_index = STORES.index(store) + 1
-    return 0.001 * format_index * store_index * window_s + (
-        0.01 if read_kind == "all" else 0.0
+    return (
+        0.001 * format_index * store_index * window_s
+        + (0.01 if read_kind == "all" else 0.0)
+        + 0.0005 * (subset_size(read_kind) or 0)
     )
 
 
@@ -66,6 +72,11 @@ def write_format_benchmark(path: Path) -> None:
             for store in STORES:
                 for kind in READ_KINDS:
                     for window in WINDOWS:
+                        if subset_size(kind) is not None and (
+                            recording != SUBSET_RECORDING
+                            or window not in SUBSET_WINDOWS_S
+                        ):
+                            continue
                         for name in (*READ_FORMATS, "zarr-direct"):
                             base = base_seconds(name, store, kind, window)
                             for repeat in range(REPEATS):

@@ -8,7 +8,7 @@ import numpy.typing as npt
 import pytest
 
 import generate.nwb
-from format_benchmark.positions import positions
+from format_benchmark.positions import positions, selection
 from format_benchmark.readers import (
     READERS,
     SERIES_NAME,
@@ -31,6 +31,10 @@ WINDOWS_US = [
 ]
 """Start, end, and channel of windows that cover a gap, an end of the recording,
 and a start between two samples."""
+
+BLOCKS = (range(0, 4), range(1, 5), range(2, 6), range(5, 6))
+"""Blocks of channels. The first holds channel 0, which has the gaps, and the last
+is the last channel alone."""
 
 
 def test_series_name_matches_the_files_that_generate_writes() -> None:
@@ -72,10 +76,14 @@ def expected_window(
     full: npt.NDArray[np.float32],
     start_us: int,
     end_us: int,
-    channel: int | None,
+    channel: int | range | None,
 ) -> npt.NDArray[np.float32]:
     first, stop = sample_range(start_us, end_us, TINY_SPEC.rate_hz)
-    return full[first:stop] if channel is None else full[first:stop, channel]
+    if channel is None:
+        return full[first:stop]
+    if isinstance(channel, range):
+        return full[first:stop, channel.start : channel.stop]
+    return full[first:stop, channel]
 
 
 def test_every_reader_returns_the_same_samples(
@@ -93,7 +101,7 @@ def test_every_reader_returns_the_same_samples(
             reader.open()
             try:
                 for start_us, end_us, channel in WINDOWS_US:
-                    for selected in (channel, None):
+                    for selected in (channel, None, *BLOCKS):
                         expected = expected_window(
                             full, start_us, end_us, selected
                         )
@@ -126,13 +134,15 @@ def test_the_planned_windows_read_the_same_samples_in_every_format(
             try:
                 for read in reads:
                     end_us = read.start_us + 10_000_000
-                    result = reader.read(read.start_us, end_us, read.channel)
-                    np.testing.assert_array_equal(
-                        result,
-                        expected_window(
-                            full, read.start_us, end_us, read.channel
-                        ),
-                    )
+                    block = selection(TINY_SPEC, "channels4", read)
+                    for selected in (read.channel, block):
+                        result = reader.read(read.start_us, end_us, selected)
+                        np.testing.assert_array_equal(
+                            result,
+                            expected_window(
+                                full, read.start_us, end_us, selected
+                            ),
+                        )
             finally:
                 reader.close()
     finally:
@@ -158,6 +168,56 @@ def test_the_tszarr_reader_returns_the_samples_of_the_window(
         assert len(shifted) == 512
         assert stacked.shape == (512, TINY_SPEC.channels)
         np.testing.assert_array_equal(stacked[:, 0], shifted)
+    finally:
+        reader.close()
+        filesystem.close()
+
+
+def test_every_reader_returns_the_block_in_channel_order(
+    store: str, roots: StoreRoots, tiny_root: Path
+) -> None:
+    full = reference(tiny_root)
+    filesystem = make_filesystem(store, roots)
+    try:
+        for file_format in schemas.READ_FORMATS + ("zarr-direct",):
+            reader = make_reader(
+                file_format, filesystem, store, roots, TINY_SPEC
+            )
+            reader.open()
+            try:
+                result = reader.read(1_000_000, 2_000_000, range(2, 5))
+                assert result.shape == (TINY_SPEC.rate_hz, 3), file_format
+                for column, channel in enumerate(range(2, 5)):
+                    np.testing.assert_array_equal(
+                        result[:, column],
+                        expected_window(full, 1_000_000, 2_000_000, channel),
+                        err_msg=file_format,
+                    )
+            finally:
+                reader.close()
+    finally:
+        filesystem.close()
+
+
+def test_a_block_read_fetches_fewer_bytes_than_every_channel(
+    roots: StoreRoots, store: str
+) -> None:
+    filesystem = make_filesystem(store, roots)
+    reader = make_reader(
+        "nwb-zarr-channel", filesystem, store, roots, TINY_SPEC
+    )
+    reader.open()
+    try:
+        before = filesystem.counts()
+        reader.read(0, 10_000_000, range(1, 3))
+        block = filesystem.counts() - before
+        before = filesystem.counts()
+        reader.read(0, 10_000_000, 1)
+        one = filesystem.counts() - before
+        before = filesystem.counts()
+        reader.read(0, 10_000_000, None)
+        every = filesystem.counts() - before
+        assert one.bytes < block.bytes < every.bytes
     finally:
         reader.close()
         filesystem.close()

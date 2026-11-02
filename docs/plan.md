@@ -129,9 +129,11 @@ options of the run.
 ## Format benchmark: random reads of raw samples
 
 A read returns the raw samples of a window that starts at a random position. Two kinds of
-read are timed: one channel over the window, and every channel over the window. Window
-lengths are 1 s, 10 s, 1 min, and 10 min. The same seeded positions serve every format
-and store, so each format reads the same windows. The benchmark reads R1-1h, R2-1h,
+read are timed at every window: one channel, and every channel. Window lengths are 1 s,
+10 s, 1 min, and 10 min. A read of a contiguous block of 4, 16, or 64 channels is also
+timed at the 10 s window, where the recording has more channels than the block. The block
+starts at a seeded channel, so every format reads the same channels. The same seeded
+positions serve every format and store, so each format reads the same windows. The benchmark reads R1-1h, R2-1h,
 R3-1h, and R4. The time of a read depends on the window and the chunk layout. The length
 of the file does not change it.
 
@@ -165,7 +167,8 @@ Readers, all through fsspec so that the store is the only thing that changes:
 - NWB on Zarr: pynwb with hdmf-zarr opens the file over fsspec. A read slices `data` of
   the ElectricalSeries.
 - TS-Zarr: `open_bundle` from timeseries-zarr opens the bundle. A one-channel read is
-  `ContinuousChannel.read`. An all-channel read is `Bundle.stack` with `max_workers=32`.
+  `ContinuousChannel.read`. A read of several channels is `Bundle.stack` with
+  `max_workers=32`.
 - Overhead: a 1-byte object read through the same fsspec filesystem, the per-request
   floor of each store.
 
@@ -289,6 +292,12 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
   users, with the failure cross and the link-limited ring of Figure 3. R1 and R2 have the
   1-user line only. This figure shows
   how each method's time depends on the raw bytes under the window.
+- Figure 5. Median seconds per read (upper row) and median bytes per read (lower row) at
+  the 10 s window against the number of channels read (1, 4, 16, 64, and every channel of
+  the recording), log-log, one line per format, one panel per store, for R3-1h. A dotted
+  line marks the median Overhead read of each store. The other recordings with subset
+  reads go to the supplement. The figure shows how the time of each format grows with the
+  channels read.
 - Table 1. The recordings table above.
 - Table 2. Storage: bytes at rest, object count, and multiplier per recording and format.
   The raw-only TS-Zarr row is the raw-only comparison with EDF and NWB.

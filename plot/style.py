@@ -11,6 +11,8 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.typing import LineStyleType
 
+from tszbench.schemas import SUBSET_CHANNELS, SUBSET_KINDS
+
 STORE_COLORS = {"local": "#0072B2", "http": "#E69F00", "s3": "#009E73"}
 """One color per store in every figure. The Wong colorblind-safe palette."""
 
@@ -45,7 +47,15 @@ FORMAT_LINES: dict[str, tuple[str, LineStyleType, str]] = {
 RECORDING_MARKERS = ("o", "s", "^", "D", "v", "P", "X", "*")
 """Markers of the recordings in Figure 4, in recording order."""
 
-READ_KIND_LABELS = {"one": "one channel", "all": "all channels"}
+READ_KIND_LABELS = {
+    "one": "one channel",
+    **{
+        kind: f"{count} channels"
+        for kind, count in zip(SUBSET_KINDS, SUBSET_CHANNELS, strict=True)
+    },
+    "all": "all channels",
+}
+"""Label of each read kind, in the order of `tszbench.schemas.READ_KINDS`."""
 
 FAILED_MARKER = "X"
 """Marker of a resampling benchmark run whose failure rate is above 0."""

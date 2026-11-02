@@ -28,10 +28,13 @@ from plot.style import (
     new_figure,
     save_figure,
 )
-from tszbench.schemas import READ_FORMATS, READ_KINDS, STORES
+from tszbench.schemas import READ_FORMATS, STORES
 
 PANEL_WIDTH = 3.2
 PANEL_HEIGHT = 2.6
+
+FIGURE_KINDS = ("one", "all")
+"""Read kinds of Figure 2. The subset kinds appear in Figure 5."""
 
 
 def figure2_series(format_benchmark: Any, recording: str) -> Any:
@@ -46,6 +49,7 @@ def figure2_series(format_benchmark: Any, recording: str) -> Any:
     rows = format_benchmark[
         (format_benchmark["recording"] == recording)
         & format_benchmark["format"].isin(READ_FORMATS)
+        & format_benchmark["read_kind"].isin(FIGURE_KINDS)
     ]
     if rows.empty:
         raise NoDataError(f"no reads of {recording} in format_benchmark")
@@ -116,7 +120,7 @@ def figure2(
     series = figure2_series(format_benchmark, recording)
     floor = overhead_floor(format_benchmark, recording)
     stores = [name for name in STORES if name in set(series["store"])]
-    kinds = [name for name in READ_KINDS if name in set(series["read_kind"])]
+    kinds = [name for name in FIGURE_KINDS if name in set(series["read_kind"])]
     windows = sorted(series["window_s"].unique())
     figure = new_figure(
         PANEL_WIDTH * len(stores) + 0.6, 2 * PANEL_HEIGHT * len(kinds) + 1.2
@@ -207,6 +211,7 @@ def _drawn_reads(format_benchmark: Any, recording: str) -> Any:
             format_benchmark[
                 (format_benchmark["recording"] == recording)
                 & format_benchmark["format"].isin(READ_FORMATS)
+                & format_benchmark["read_kind"].isin(FIGURE_KINDS)
             ],
             overhead_rows(format_benchmark, recording),
         ]

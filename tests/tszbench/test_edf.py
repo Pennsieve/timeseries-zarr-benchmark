@@ -187,6 +187,78 @@ def test_one_channel_window_equals_digital_times_grid(tmp_path, layout, window):
         )
 
 
+@pytest.mark.parametrize("window", WINDOWS)
+def test_channel_range_window_equals_the_matching_columns(tmp_path, window):
+    spec = LAYOUTS["r3"]
+    path, data = write_layout(tmp_path, spec)
+    start_us, end_us = resolve_window(spec, WINDOWS[window])
+    first, stop = sample_range(start_us, end_us, spec.rate_hz)
+    stop = min(stop, spec.samples_per_channel)
+    reader = reader_for(path)
+    everything = reader.read(start_us, end_us)
+    for block in (range(0, 3), range(1, 4), range(2, 5), range(4, 5)):
+        result = reader.read(start_us, end_us, block)
+        assert result.dtype == np.float32
+        assert result.shape == (stop - first, len(block))
+        np.testing.assert_array_equal(
+            result,
+            expected_physical(data[first:stop, block.start : block.stop]),
+        )
+        np.testing.assert_array_equal(
+            result, everything[:, block.start : block.stop]
+        )
+
+
+def test_channel_range_keeps_the_gap_of_channel_zero(tmp_path):
+    spec = LAYOUTS["r2"]
+    path, data = write_layout(tmp_path, spec)
+    gap = spec.samples_per_channel // 3
+    start_us = gap * 1_000_000 // spec.rate_hz
+    result = reader_for(path).read(start_us, start_us + 400_000, range(0, 2))
+    assert np.isnan(result[:, 0]).any()
+    assert not np.isnan(result[:, 1]).any()
+    first, stop = sample_range(start_us, start_us + 400_000, spec.rate_hz)
+    np.testing.assert_array_equal(
+        result, expected_physical(data[first:stop, 0:2])
+    )
+
+
+def test_a_range_of_one_channel_keeps_its_column(tmp_path):
+    spec = LAYOUTS["r2"]
+    path, _ = write_layout(tmp_path, spec)
+    reader = reader_for(path)
+    column = reader.read(0, 2_000_000, range(2, 3))
+    assert column.shape == (2 * spec.rate_hz, 1)
+    np.testing.assert_array_equal(column[:, 0], reader.read(0, 2_000_000, 2))
+
+
+def test_a_window_beyond_the_file_is_empty_for_a_channel_range(tmp_path):
+    spec = LAYOUTS["r2"]
+    path, _ = write_layout(tmp_path, spec)
+    after = spec.duration_us
+    result = reader_for(path).read(after, after + 5_000_000, range(1, 3))
+    assert result.shape == (0, 2)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        range(0),
+        range(2, 2),
+        range(0, 4, 2),
+        range(3, 0, -1),
+        range(-1, 2),
+        range(2, 5),
+    ],
+)
+def test_rejects_a_channel_range_that_is_not_valid(tmp_path, block):
+    path, _ = write_layout(tmp_path, LAYOUTS["r2"])
+    with pytest.raises(
+        ValueError, match=r"non-empty range with step 1 inside \[0, 4\)"
+    ):
+        reader_for(path).read(0, 1_000_000, block)
+
+
 def test_gap_markers_read_as_nan_and_nothing_else_does(tmp_path):
     spec = LAYOUTS["r2"]
     path, data = write_layout(tmp_path, spec)
@@ -412,6 +484,30 @@ def test_one_channel_of_a_wide_file_reads_one_range_per_record(tmp_path):
     assert {end - start for start, end in filesystem.reads} == {4_000}
     np.testing.assert_array_equal(
         result, expected_physical(data[1_000:7_000, 7])
+    )
+
+
+def test_channel_range_of_a_wide_file_reads_one_range_per_record(tmp_path):
+    spec = replace(
+        RECORDINGS["R3"],
+        id="wide",
+        channels=300,
+        rate_hz=2000,
+        duration_s=4,
+        edf_record_s=1.0,
+        gaps=(),
+    )
+    path, data = write_layout(tmp_path, spec)
+    filesystem = RecordingFileSystem()
+    reader = EdfRangeReader(filesystem, str(path))
+    filesystem.reads.clear()
+    result = reader.read(500_000, 3_500_000, range(7, 11))
+    assert len(filesystem.reads) == 4
+    assert {end - start for start, end in filesystem.reads} == {16_000}
+    first_start = reader.header.header_bytes + 7 * 4_000
+    assert filesystem.reads[0][0] == first_start
+    np.testing.assert_array_equal(
+        result, expected_physical(data[1_000:7_000, 7:11])
     )
 
 

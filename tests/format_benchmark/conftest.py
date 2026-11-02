@@ -14,7 +14,7 @@ TINY_ID = "tiny"
 TINY_SPEC = replace(
     RECORDINGS["R3"],
     id=TINY_ID,
-    channels=3,
+    channels=6,
     rate_hz=512,
     duration_s=40,
     edf_record_s=1.0,
@@ -23,7 +23,8 @@ TINY_SPEC = replace(
         Gap(channel=0, start_s=20.25, duration_s=0.5),
     ),
 )
-"""Three channels at 512 Hz for 40 s. Windows of 1 s and 10 s fit."""
+"""Six channels at 512 Hz for 40 s. Windows of 1 s and 10 s fit, and a block of
+`channels4` fits."""
 
 TINY_WINDOWS_S = (1, 10)
 """Windows of `format_benchmark.positions.WINDOWS_S` that fit `TINY_SPEC`."""

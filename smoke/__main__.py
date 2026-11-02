@@ -23,7 +23,11 @@ from types import FrameType
 
 import httpx
 
-from format_benchmark.positions import MIN_READS_KEY, READ_BUDGET_KEY
+from format_benchmark.positions import (
+    MIN_READS_KEY,
+    READ_BUDGET_KEY,
+    SUBSET_WINDOWS_S,
+)
 from tszbench import schemas
 from tszbench.csvmeta import read_header, read_rows
 from tszbench.rangeserver import free_port, serve_directory
@@ -32,12 +36,15 @@ RECORDINGS = ("R1-1h", "R2-1h")
 """Recordings of the run. Every format of each is written."""
 
 PLOT_RECORDING = "R2-1h"
-"""Recording of Figures 2 and 3, Table 3, and the cost paragraph. It is both the
+"""Recording of Figures 2, 3, and 5, Table 3, and the cost paragraph. It is both the
 format recording and the resampling recording of the plot stage."""
 
 BUCKET = "tszbench-smoke"
 PREFIX = "data"
 REGION = "us-east-1"
+
+SUBSET_WINDOW_S = SUBSET_WINDOWS_S[0]
+"""Window of the subset reads of the format benchmark."""
 
 FORMAT_WINDOWS_S = (1, 10, 60)
 """Windows of the format benchmark. Figure 1 needs 10 s."""
@@ -74,6 +81,7 @@ EXPECTED_OUTPUTS = (
     "fig2.pdf",
     "fig3.pdf",
     "fig4.pdf",
+    "fig5.pdf",
     "table1.csv",
     "table2.csv",
     "table3.csv",
@@ -275,6 +283,30 @@ def check_format_benchmark_budget(results: Path) -> None:
         )
 
 
+def check_subset_reads(results: Path) -> None:
+    """Check that the format benchmark measured the subset reads of the plot recording.
+
+    The plot recording has more channels than the 4 and 16 of the first two
+    subset kinds, so each has rows at 10 s.
+
+    Raises:
+        SmokeError: A subset kind has no read of the plot recording at 10 s.
+    """
+    rows = read_rows(results / schemas.FORMAT_READS_FILE)
+    for kind in schemas.SUBSET_KINDS[:2]:
+        found = any(
+            row["recording"] == PLOT_RECORDING
+            and row["read_kind"] == kind
+            and int(row["window_s"]) == SUBSET_WINDOW_S
+            for row in rows
+        )
+        if not found:
+            raise SmokeError(
+                f"format_benchmark: {schemas.FORMAT_READS_FILE} has no "
+                f"{kind} read of {PLOT_RECORDING} at {SUBSET_WINDOW_S} s"
+            )
+
+
 def numbers(values: Sequence[int]) -> str:
     """Return values as a comma-separated list."""
     return ",".join(str(value) for value in values)
@@ -360,6 +392,7 @@ def run(out: Path) -> None:
             env,
         )  # fmt: skip
         check_format_benchmark_budget(results)
+        check_subset_reads(results)
         service = servers.enter_context(
             resampling_service(s3_root, endpoint, env)
         )

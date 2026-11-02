@@ -1,10 +1,15 @@
 import pytest
 
 from format_benchmark.positions import (
+    FLOAT32_BYTES,
     MAX_READ_BYTES,
+    SUBSET_WINDOWS_S,
     WINDOWS_S,
+    Position,
     positions,
+    read_bytes,
     repeats,
+    selection,
     skip_reason,
     window_index,
 )
@@ -167,3 +172,110 @@ def test_skip_reason_rejects_an_unknown_format() -> None:
 def test_every_row_of_the_plan_is_known_to_skip_reason() -> None:
     for file_format in schemas.FORMAT_ROWS:
         skip_reason(RECORDINGS["R1"], file_format, "one", 1)
+
+
+def test_subset_reads_are_measured_at_ten_seconds_only() -> None:
+    assert SUBSET_WINDOWS_S == (10,)
+
+
+def test_subset_kinds_read_four_sixteen_and_sixty_four_channels() -> None:
+    assert schemas.SUBSET_KINDS == ("channels4", "channels16", "channels64")
+    assert [schemas.subset_size(kind) for kind in schemas.READ_KINDS] == [
+        None,
+        4,
+        16,
+        64,
+        None,
+    ]
+
+
+def test_selection_gives_the_channel_for_one_and_none_for_all() -> None:
+    read = Position(0, 5, 0)
+    assert selection(RECORDINGS["R3"], "one", read) == 5
+    assert selection(RECORDINGS["R3"], "all", read) is None
+
+
+def test_selection_gives_a_block_that_starts_at_a_folded_channel() -> None:
+    spec = RECORDINGS["R2"]
+    assert selection(spec, "channels4", Position(0, 7, 0)) == range(7, 11)
+    assert selection(spec, "channels4", Position(0, 30, 0)) == range(1, 5)
+    assert selection(spec, "channels16", Position(0, 31, 0)) == range(14, 30)
+
+
+def test_selection_keeps_every_block_inside_the_recording() -> None:
+    for name in ("R2", "R3", "R4"):
+        spec = RECORDINGS[name]
+        for kind in schemas.SUBSET_KINDS:
+            size = schemas.subset_size(kind)
+            if size is None or size >= spec.channels:
+                continue
+            for read in positions(spec, 10):
+                block = selection(spec, kind, read)
+                assert isinstance(block, range)
+                assert len(block) == size
+                assert block.step == 1
+                assert block.start >= 0 and block.stop <= spec.channels
+
+
+def test_selection_is_the_same_on_every_call_and_for_every_cut() -> None:
+    spec = RECORDINGS["R3"]
+    reads = positions(spec, 10)
+    first = [selection(spec, "channels16", read) for read in reads]
+    assert first == [selection(spec, "channels16", read) for read in reads]
+    assert len(set(first)) > 1
+
+
+def test_subset_reads_leave_the_positions_unchanged() -> None:
+    reads = positions(RECORDINGS["R3"], 10, 3)
+    assert [(read.channel, read.start_us) for read in reads] == [
+        (read.channel, read.start_us)
+        for read in positions(RECORDINGS["R3"], 10)[:3]
+    ]
+
+
+def test_selection_rejects_a_block_as_wide_as_the_recording() -> None:
+    with pytest.raises(ValueError, match="has 6"):
+        selection(TINY_SPEC, "channels64", Position(0, 0, 0))
+    with pytest.raises(ValueError, match="has 1"):
+        selection(RECORDINGS["R1"], "channels4", Position(0, 0, 0))
+
+
+def test_selection_rejects_an_unknown_read_kind() -> None:
+    with pytest.raises(ValueError, match="must be one of"):
+        selection(RECORDINGS["R3"], "some", Position(0, 0, 0))
+
+
+def test_read_bytes_counts_the_channels_of_the_read_kind() -> None:
+    spec = RECORDINGS["R3"]
+    one = 10 * spec.rate_hz * FLOAT32_BYTES
+    assert read_bytes(spec, "one", 10) == one
+    assert read_bytes(spec, "channels4", 10) == 4 * one
+    assert read_bytes(spec, "channels64", 10) == 64 * one
+    assert read_bytes(spec, "all", 10) == spec.channels * one
+
+
+def test_subset_reads_are_skipped_outside_the_subset_windows() -> None:
+    for window in (1, 60, 600):
+        reason = skip_reason(RECORDINGS["R3"], "tszarr", "channels4", window)
+        assert reason is not None
+        assert "only at windows of 10 s" in reason
+    assert skip_reason(RECORDINGS["R3"], "tszarr", "channels4", 10) is None
+
+
+def test_subset_reads_are_skipped_when_the_block_is_not_narrower() -> None:
+    for name, channels in (("R1", 1), ("R2", 32)):
+        spec = RECORDINGS[name]
+        assert spec.channels == channels
+    assert skip_reason(RECORDINGS["R1"], "tszarr", "channels4", 10) is not None
+    assert skip_reason(RECORDINGS["R2"], "tszarr", "channels16", 10) is None
+    reason = skip_reason(RECORDINGS["R2"], "tszarr", "channels64", 10)
+    assert reason is not None
+    assert "which has 32" in reason
+    assert skip_reason(RECORDINGS["R3"], "tszarr", "channels64", 10) is None
+    assert skip_reason(RECORDINGS["R4"], "tszarr", "channels64", 10) is None
+
+
+def test_the_overhead_row_has_no_subset_read() -> None:
+    for kind in schemas.SUBSET_KINDS:
+        reason = skip_reason(RECORDINGS["R3"], "overhead", kind, 10)
+        assert reason == "the overhead row reads one object"

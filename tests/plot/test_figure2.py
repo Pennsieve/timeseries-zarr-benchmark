@@ -34,6 +34,20 @@ def test_series_leaves_out_direct_and_overhead_reads(format_benchmark):
     assert len(series) == 3 * 2 * 6 * 3
 
 
+def test_series_leaves_out_the_subset_read_kinds(format_benchmark):
+    series = figure2_series(format_benchmark, "R3-1h")
+    assert set(series["read_kind"]) == {"one", "all"}
+
+
+def test_figure2_draws_no_panel_for_a_subset_read_kind(
+    format_benchmark, tmp_path, capture
+):
+    saved = capture(module)
+    caption = figure2(format_benchmark, tmp_path, "R3-1h").caption
+    assert len(saved[0].axes) == 12
+    assert "2,268 reads" in caption
+
+
 def test_series_raises_for_an_absent_recording(format_benchmark):
     with pytest.raises(NoDataError):
         figure2_series(format_benchmark, "R4")

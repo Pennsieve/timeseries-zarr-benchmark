@@ -78,21 +78,48 @@ def test_main_runs_every_combination_and_merges_the_csvs(
     assert [(c.file_format, c.read_kind, c.window_s) for c in started] == [
         ("edf", "one", 1),
         ("edf", "one", 10),
+        ("edf", "channels4", 10),
         ("edf", "all", 1),
         ("edf", "all", 10),
         ("tszarr", "one", 1),
         ("tszarr", "one", 10),
+        ("tszarr", "channels4", 10),
         ("tszarr", "all", 1),
         ("tszarr", "all", 10),
         ("overhead", "one", 1),
     ]
     reads = read_rows(tmp_path / "format-reads.csv")
     opens = read_rows(tmp_path / "format-opens.csv")
-    assert len(reads) == 9 * REPEATS
-    assert len(opens) == 9
+    assert len(reads) == 11 * REPEATS
+    assert len(opens) == 11
     assert set(reads[0]) == set(schemas.FORMAT_READS)
     assert set(opens[0]) == set(schemas.FORMAT_OPENS)
     assert [row["repeat"] for row in reads[:REPEATS]] == ["0", "1"]
+
+
+@pytest.mark.usefixtures("tiny_recording")
+def test_main_runs_a_subset_read_kind_at_ten_seconds_only(
+    tmp_path: Path, tiny_root: Path, started: list[Combination]
+) -> None:
+    arguments = command(
+        tiny_root, tmp_path, "--read-kinds", "channels4,channels16"
+    )
+    assert format_benchmark_main.main(arguments) == 0
+    assert [(c.file_format, c.read_kind, c.window_s) for c in started] == [
+        ("edf", "channels4", 10),
+        ("tszarr", "channels4", 10),
+    ]
+    reads = read_rows(tmp_path / "format-reads.csv")
+    assert {row["read_kind"] for row in reads} == {"channels4"}
+
+
+def test_main_rejects_an_unknown_read_kind(
+    tmp_path: Path, tiny_root: Path
+) -> None:
+    with pytest.raises(SystemExit):
+        format_benchmark_main.main(
+            command(tiny_root, tmp_path, "--read-kinds", "channels8")
+        )
 
 
 @pytest.mark.usefixtures("tiny_recording")
@@ -243,7 +270,7 @@ def test_main_reruns_a_combination_run_with_fewer_repeats(
     format_benchmark_main.main(arguments)
     started.clear()
     format_benchmark_main.main(command(tiny_root, tmp_path))
-    assert len(started) == 9
+    assert len(started) == 11
 
 
 @pytest.mark.usefixtures("tiny_recording")
@@ -284,8 +311,8 @@ def test_main_keeps_the_rows_of_a_recording_that_an_earlier_command_ran(
         arguments[arguments.index("--recordings") + 1] = name
         assert format_benchmark_main.main(arguments) == 0
     reads = read_rows(tmp_path / "format-reads.csv")
-    assert [row["recording"] for row in reads] == ["R2"] * 18 + [TINY_ID] * 18
-    assert len(read_rows(tmp_path / "format-opens.csv")) == 18
+    assert [row["recording"] for row in reads] == ["R2"] * 22 + [TINY_ID] * 22
+    assert len(read_rows(tmp_path / "format-opens.csv")) == 22
     header = read_header(tmp_path / "format-reads.csv")
     assert header["recordings"] == f"R2,{TINY_ID}"
     assert header["seed.R2"] == str(second.seed)

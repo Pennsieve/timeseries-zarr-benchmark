@@ -69,10 +69,11 @@ suite on AWS.
   `--overwrite` to replace files, `format_benchmark` skips the combinations it
   finished, and `resampling_benchmark.load.orchestrate --skip-done` skips the
   runs it finished.
-- A combination is one recording, format, store, and window. Each combination
-  keeps reading until the timed reads add up to `--read-budget-s` (60 seconds).
-  It always makes at least `--min-reads` reads (1). `--max-repeats` caps the
-  reads.
+- A combination is one recording, format, store, read kind, and window. A read
+  kind is one channel, a block of 4, 16, or 64 channels, or every channel.
+  Each combination keeps reading until the timed reads add up to
+  `--read-budget-s` (60 seconds). It always makes at least `--min-reads` reads
+  (1). `--max-repeats` caps the reads.
 - NWB on Zarr runs on hdmf-zarr 0.14 over Zarr v3. One environment holds every
   library.
 

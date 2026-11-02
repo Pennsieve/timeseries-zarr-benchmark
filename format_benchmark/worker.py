@@ -16,6 +16,7 @@ from format_benchmark.positions import (
     READ_BUDGET_KEY,
     READ_BUDGET_S,
     positions,
+    selection,
 )
 from format_benchmark.readers import make_reader
 from tszbench import schemas
@@ -24,6 +25,19 @@ from tszbench.fs import StoreRoots, make_filesystem
 
 ALL_CHANNELS = -1
 """Value of the `channel` column of an all-channel read."""
+
+
+def _channel_column(channel: int | range | None) -> int:
+    """Return the `channel` column of a read.
+
+    The column holds the channel, the first channel of a block, or
+    `ALL_CHANNELS`.
+    """
+    if channel is None:
+        return ALL_CHANNELS
+    if isinstance(channel, range):
+        return channel.start
+    return channel
 
 
 def add_root_options(parser: argparse.ArgumentParser) -> None:
@@ -158,7 +172,7 @@ def run(
         timed = 0.0
         made = 0
         for read in reads:
-            channel = None if combination.read_kind == "all" else read.channel
+            channel = selection(spec, combination.read_kind, read)
             before = filesystem.counts()
             started = perf_counter()
             samples = reader.read(
@@ -170,7 +184,7 @@ def run(
                 key
                 | {
                     "repeat": read.repeat,
-                    "channel": ALL_CHANNELS if channel is None else channel,
+                    "channel": _channel_column(channel),
                     "start_us": read.start_us,
                     "seconds": seconds,
                     "bytes": used.bytes,

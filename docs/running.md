@@ -5,12 +5,12 @@ in its order, copies the results back, and destroys the machines. Each step
 names the host it runs on. Commands on an instance run from
 `~/timeseries-zarr-benchmark`, the clone that the Terraform user data makes.
 
-The run takes about 6 h from the first apply to the destroy. Generation, upload,
-and the pull to the file server take about 1 h. The format benchmark takes 2 to
-3 h, and the resampling benchmark about 2 h. Start each long step inside `tmux`
-on the instance so that a dropped SSH connection does not stop it. Every stage
-can run again with the same options and continues where it stopped, as the
-README describes.
+The run takes about 6.5 h from the first apply to the destroy. Generation,
+upload, and the pull to the file server take about 1 h. The format benchmark
+takes 2.5 to 3.5 h, and the resampling benchmark about 2 h. Start each long
+step inside `tmux` on the instance so that a dropped SSH connection does not
+stop it. Every stage can run again with the same options and continues where it
+stopped, as the README describes.
 
 ## Before you start
 
@@ -89,9 +89,9 @@ CLIENT=$(terraform output -json public_ips | jq -r .client)
 reaches every other host over SSH, so copy the key and the hosts file to it:
 
 ```bash
-scp -i ~/.ssh/tszbench ~/.ssh/tszbench ubuntu@$CLIENT:.ssh/id_ed25519
-scp -i ~/.ssh/tszbench hosts.txt ubuntu@$CLIENT:hosts.txt
-ssh -i ~/.ssh/tszbench ubuntu@$CLIENT
+scp -i ~/.ssh/tszbench ~/.ssh/tszbench ubuntu@${CLIENT}:.ssh/id_ed25519
+scp -i ~/.ssh/tszbench hosts.txt ubuntu@${CLIENT}:hosts.txt
+ssh -i ~/.ssh/tszbench ubuntu@${CLIENT}
 ```
 
 Every step from here runs on the client unless it says otherwise. Set these
@@ -170,9 +170,9 @@ ssh $FILE_SERVER "cd timeseries-zarr-benchmark && .venv/bin/python -m upload pul
     --recordings R1-1h,R2-1h,R3-1h,R4,R1,R2,R3
 ```
 
-This writes `results/storage.csv`, which Table 2 reads. Table 2 has a row for the
-raw-only TS-Zarr bundle. Measuring a recording
-again replaces its rows and keeps the rows of the others.
+This writes `results/storage.csv`, which Table 2 reads. Table 2 has a row for
+the raw-only TS-Zarr bundle. Measuring a recording again replaces its rows and
+keeps the rows of the others.
 
 ## Run the format benchmark
 
@@ -194,11 +194,14 @@ Run the grid:
 ```
 
 The defaults run R1-1h, R2-1h, R3-1h, and R4 on every store, format, read
-kind, and window. Each
-combination writes its part under `results/format-parts/`. The merge at the end
-writes `results/format-reads.csv` and `results/format-opens.csv` from every
-finished part, so a command that runs one recording or store keeps the rows of
-the others. The same command run again skips the finished combinations.
+kind, and window. The read kinds are `one`, `channels4`, `channels16`,
+`channels64`, and `all`. The three `channels` kinds read a block of that many
+channels at the 10 s window, and a recording with no more channels than the
+block skips them. Each combination writes its part under
+`results/format-parts/`. The merge at the end writes `results/format-reads.csv`
+and `results/format-opens.csv` from every finished part, so a command that runs
+one recording or store keeps the rows of the others. The same command run again
+skips the finished combinations.
 
 ## Create the load generators
 
@@ -211,7 +214,7 @@ terraform plan
 terraform apply
 terraform output -raw hosts_file > hosts.txt
 CLIENT=$(terraform output -json public_ips | jq -r .client)
-scp -i ~/.ssh/tszbench hosts.txt ubuntu@$CLIENT:hosts.txt
+scp -i ~/.ssh/tszbench hosts.txt ubuntu@${CLIENT}:hosts.txt
 ```
 
 On the client, run the setup check from the section on the outputs again. It
@@ -310,8 +313,8 @@ that its date and prices match the run before you plot.
 On your machine, copy the results back:
 
 ```bash
-scp -r -i ~/.ssh/tszbench ubuntu@$CLIENT:timeseries-zarr-benchmark/results .
-scp -r -i ~/.ssh/tszbench ubuntu@$CLIENT:timeseries-zarr-benchmark/figures .
+scp -r -i ~/.ssh/tszbench ubuntu@${CLIENT}:timeseries-zarr-benchmark/results .
+scp -r -i ~/.ssh/tszbench ubuntu@${CLIENT}:timeseries-zarr-benchmark/figures .
 ```
 
 ## Destroy the machines
