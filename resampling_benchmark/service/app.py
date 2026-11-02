@@ -12,6 +12,7 @@ from fastapi import FastAPI, Query, Request, Response
 
 from resampling_benchmark.service.engine import (
     DEFAULT_PROCESSES,
+    TASK_THREADS,
     Engine,
     TaskResult,
     assemble,
@@ -24,6 +25,7 @@ ENV_S3_ROOT = "RESAMPLING_S3_ROOT"
 ENV_S3_ENDPOINT_URL = "RESAMPLING_S3_ENDPOINT_URL"
 ENV_RECORDINGS = "RESAMPLING_RECORDINGS"
 ENV_PROCESSES = "RESAMPLING_PROCESSES"
+ENV_TASK_THREADS = "RESAMPLING_TASK_THREADS"
 
 SLOW_DOWN = "SlowDown"
 """Name of the S3 error code that maps to HTTP 503."""
@@ -40,11 +42,13 @@ class Settings:
         roots: S3 bucket, prefix, and endpoint.
         recordings: Ids of the recordings to open at startup.
         processes: Processes in the pool that reads and reduces the tasks.
+        task_threads: Tasks each pool process runs at once.
     """
 
     roots: StoreRoots
     recordings: tuple[str, ...]
     processes: int
+    task_threads: int = TASK_THREADS
 
 
 def settings_from_environment() -> Settings:
@@ -53,7 +57,7 @@ def settings_from_environment() -> Settings:
     `RESAMPLING_S3_ROOT` is required. `RESAMPLING_S3_ENDPOINT_URL` is optional.
     `RESAMPLING_RECORDINGS` is a comma-separated list and defaults to every
     recording of the benchmark. `RESAMPLING_PROCESSES` defaults to
-    `DEFAULT_PROCESSES`.
+    `DEFAULT_PROCESSES`. `RESAMPLING_TASK_THREADS` defaults to `TASK_THREADS`.
 
     Raises:
         KeyError: `RESAMPLING_S3_ROOT` is not set.
@@ -68,6 +72,7 @@ def settings_from_environment() -> Settings:
         ),
         recordings=tuple(name.strip() for name in recordings.split(",")),
         processes=int(os.environ.get(ENV_PROCESSES) or DEFAULT_PROCESSES),
+        task_threads=int(os.environ.get(ENV_TASK_THREADS) or TASK_THREADS),
     )
 
 
@@ -78,16 +83,22 @@ def error_status(error: BaseException) -> int:
 
 
 async def cancel_on_disconnect(
-    request: Request, futures: list["Future[TaskResult]"]
+    request: Request, futures: list["Future[list[TaskResult]]"]
 ) -> None:
-    """Cancel the tasks that have not started once the client disconnects.
+    """Cancel the batches that have not started once the client disconnects.
 
-    Runs until its task is canceled. A task that already runs finishes.
+    Runs until its task is canceled. A batch that already runs finishes.
     """
     while not await request.is_disconnected():
         await asyncio.sleep(DISCONNECT_POLL_S)
     for future in futures:
         future.cancel()
+
+
+def _consume(future: "asyncio.Future[list[TaskResult]]") -> None:
+    """Mark the outcome of a batch that no handler awaits as retrieved."""
+    if not future.cancelled():
+        future.exception()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -102,7 +113,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         chosen = settings or settings_from_environment()
         engine = await asyncio.to_thread(
-            Engine, chosen.roots, chosen.recordings, chosen.processes
+            Engine,
+            chosen.roots,
+            chosen.recordings,
+            chosen.processes,
+            chosen.task_threads,
         )
         app.state.engine = engine
         app.state.metadata = await asyncio.to_thread(
@@ -111,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             s3_endpoint_url=chosen.roots.s3_endpoint_url or "none",
             recordings=",".join(chosen.recordings),
             processes=chosen.processes,
+            task_threads=chosen.task_threads,
         )
         yield
         await asyncio.to_thread(engine.close)
@@ -123,6 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "recordings": list(engine.recordings),
             "processes": engine.processes,
+            "task_threads": engine.task_threads,
             "in_flight": engine.in_flight,
             "metadata": app.state.metadata,
         }
@@ -141,22 +158,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             plan = engine.plan(recording, start_us, end_us)
         except ValueError as error:
             return Response(str(error), status_code=400)
-        futures = [engine.submit(task) for task in plan.tasks]
+        futures = engine.submit(plan.tasks)
         watcher = asyncio.create_task(cancel_on_disconnect(request, futures))
+        waiting = [asyncio.wrap_future(future) for future in futures]
         try:
-            outcomes = await asyncio.gather(
-                *(asyncio.wrap_future(future) for future in futures),
-                return_exceptions=True,
-            )
+            await asyncio.wait(waiting, return_when=asyncio.FIRST_EXCEPTION)
+            results: list[TaskResult] = []
+            for batch in waiting:
+                if not batch.done():
+                    continue
+                if batch.cancelled():
+                    return Response("CancelledError", status_code=500)
+                failure = batch.exception()
+                if failure is not None:
+                    return Response(
+                        type(failure).__name__,
+                        status_code=error_status(failure),
+                    )
+                results.extend(batch.result())
         finally:
             watcher.cancel()
-        results: list[TaskResult] = []
-        for outcome in outcomes:
-            if isinstance(outcome, BaseException):
-                return Response(
-                    type(outcome).__name__, status_code=error_status(outcome)
-                )
-            results.append(outcome)
+            for future in futures:
+                future.cancel()
+            for batch in waiting:
+                batch.add_done_callback(_consume)
         array = assemble(results, plan.info.channels, plan.groups)
         return Response(
             array.tobytes(),
