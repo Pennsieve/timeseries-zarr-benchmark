@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,8 @@ from tszbench.fs import (
     CountingFileSystem,
     Counts,
     StoreRoots,
+    TaskCounter,
+    count_task,
     location,
     make_filesystem,
     zarr_store,
@@ -445,4 +447,165 @@ def test_counts_are_consistent_under_concurrent_threads(tmp_path: Path) -> None:
     assert errors == []
     expected = sum(1 + (n * 25 + i) % 50 for n in range(8) for i in range(25))
     assert fs.counts() == Counts(200, expected)
+    fs.close()
+
+
+THREADS = 16
+
+
+def run_threads(work: Callable[[int], None]) -> None:
+    """Run work(index) on THREADS threads that start together."""
+    barrier = threading.Barrier(THREADS)
+    errors: list[BaseException] = []
+
+    def target(index: int) -> None:
+        try:
+            barrier.wait()
+            work(index)
+        except BaseException as error:
+            errors.append(error)
+
+    threads = [
+        threading.Thread(target=target, args=(index,))
+        for index in range(THREADS)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+
+
+def sum_counts(counts: Iterable[Counts]) -> Counts:
+    items = list(counts)
+    return Counts(sum(c.requests for c in items), sum(c.bytes for c in items))
+
+
+def check_threads_count_their_own_ranges(
+    fs: CountingFileSystem, path: str, content: bytes
+) -> None:
+    """Read distinct ranges on 16 threads and check each counter."""
+    counters: dict[int, TaskCounter] = {}
+    expected = {
+        index: Counts(index + 1, (index + 1) * (100 + index))
+        for index in range(THREADS)
+    }
+    before = fs.counts()
+
+    def work(index: int) -> None:
+        size = 100 + index
+        with count_task() as counter:
+            for step in range(index + 1):
+                start = 1_000 * index + 10 * step
+                data = fs.cat_file(path, start, start + size)
+                assert data == content[start : start + size]
+            counters[index] = counter
+
+    run_threads(work)
+    assert {i: c.counts() for i, c in counters.items()} == expected
+    assert fs.counts() - before == sum_counts(expected.values())
+
+
+def make_sharded_tree(directory: Path) -> np.ndarray:
+    (directory / "rec").mkdir(parents=True)
+    values = np.arange(64_000, dtype=np.float32).reshape(16_000, 4)
+    array = zarr.create_array(
+        store=str(directory / "rec" / "a.zarr"),
+        shape=values.shape,
+        chunks=(100, 4),
+        shards=(1_000, 4),
+        dtype="float32",
+    )
+    array[:] = values
+    return values
+
+
+def check_threads_count_their_own_zarr_slices(
+    fs: CountingFileSystem, path: str, values: np.ndarray
+) -> None:
+    """Slice a sharded array on 16 threads and check each counter."""
+    opened = zarr.open_array(zarr_store(fs, path), mode="r")
+
+    def rows(index: int) -> slice:
+        start = 900 * index + 37
+        return slice(start, start + 150 + 40 * index)
+
+    expected: dict[int, Counts] = {}
+    for index in range(THREADS):
+        with count_task() as counter:
+            np.testing.assert_array_equal(
+                opened[rows(index), :], values[rows(index), :]
+            )
+        expected[index] = counter.counts()
+        assert expected[index].requests > 0
+        assert expected[index].bytes > 0
+    assert len({c.bytes for c in expected.values()}) > 1
+
+    counters: dict[int, TaskCounter] = {}
+    before = fs.counts()
+
+    def work(index: int) -> None:
+        with count_task() as counter:
+            np.testing.assert_array_equal(
+                opened[rows(index), :], values[rows(index), :]
+            )
+            counters[index] = counter
+
+    run_threads(work)
+    assert {i: c.counts() for i, c in counters.items()} == expected
+    assert fs.counts() - before == sum_counts(expected.values())
+
+
+def test_task_counters_hold_the_requests_of_their_own_threads(
+    tmp_path: Path,
+) -> None:
+    content = np.random.default_rng(1).bytes(40_000)
+    path = tmp_path / "f.bin"
+    path.write_bytes(content)
+    fs = CountingFileSystem(LocalFileSystem(skip_instance_cache=True))
+    check_threads_count_their_own_ranges(fs, str(path), content)
+    fs.close()
+
+
+def test_task_counters_hold_the_requests_of_their_own_zarr_slices(
+    tmp_path: Path,
+) -> None:
+    values = make_sharded_tree(tmp_path)
+    fs = CountingFileSystem(LocalFileSystem(skip_instance_cache=True))
+    check_threads_count_their_own_zarr_slices(
+        fs, str(tmp_path / "rec" / "a.zarr"), values
+    )
+    fs.close()
+
+
+@pytest.mark.network
+def test_task_counters_hold_the_requests_of_their_own_threads_on_s3(
+    tmp_path: Path, store_roots: Callable[[Path], StoreRoots]
+) -> None:
+    content = np.random.default_rng(1).bytes(40_000)
+    (tmp_path / "rec").mkdir()
+    (tmp_path / "rec" / "f.bin").write_bytes(content)
+    values = make_sharded_tree(tmp_path / "zarr")
+    roots = store_roots(tmp_path)
+    fs = make_filesystem("s3", roots)
+    check_threads_count_their_own_ranges(
+        fs, location("s3", roots, "rec/f.bin"), content
+    )
+    check_threads_count_their_own_zarr_slices(
+        fs, location("s3", roots, "zarr/rec/a.zarr"), values
+    )
+    fs.close()
+
+
+def test_a_read_with_no_counter_adds_to_the_totals_only(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "f.bin"
+    path.write_bytes(b"a" * 100)
+    fs = CountingFileSystem(LocalFileSystem(skip_instance_cache=True))
+    with count_task() as counter:
+        fs.cat_file(str(path), 0, 10)
+    fs.cat_file(str(path), 0, 20)
+    assert counter.counts() == Counts(1, 10)
+    assert fs.counts() == Counts(2, 30)
     fs.close()
