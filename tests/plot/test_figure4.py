@@ -222,3 +222,19 @@ def test_figure4_draws_what_exists_when_a_recording_has_no_1_user_run(
     (axis,) = saved[0].axes
     assert axis.get_lines()
     assert "for R3," in output.caption
+
+
+def test_figure4_lists_and_captions_the_cross_only_with_a_failed_run(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    clean = figure4(runs, tmp_path).caption
+    failed = figure4(mark_failed(runs, "server", "R3", 600, 1), tmp_path)
+    labels = [
+        [text.get_text() for text in figure.legends[0].get_texts()]
+        for figure in saved
+    ]
+    assert "run with failures" not in labels[0]
+    assert "run with failures" in labels[1]
+    assert "A cross marks" not in clean
+    assert "A cross marks a run with a failure rate above 0." in failed.caption

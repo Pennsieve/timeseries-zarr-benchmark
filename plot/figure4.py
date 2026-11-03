@@ -123,9 +123,7 @@ def figure4(runs: Any, out_dir: Path, stem: str = "fig4") -> Output:
                 marker=markers[name],
                 markersize=4.5,
             )
-        failed = series[
-            (series["method"] == method) & (series["failure_rate"] > 0)
-        ]
+        failed = series[(series["method"] == method) & _failed(series)]
         axis.plot(
             failed["raw_bytes"],
             failed["median_s"],
@@ -204,19 +202,20 @@ def figure4(runs: Any, out_dir: Path, stem: str = "fig4") -> Output:
             label=_link_label(),
         )
     )
-    handles.append(
-        Line2D(
-            [],
-            [],
-            color="grey",
-            linestyle="none",
-            marker=FAILED_MARKER,
-            markerfacecolor="none",
-            markeredgecolor="black",
-            markersize=8,
-            label="run with failures",
+    if _failed(series).any():
+        handles.append(
+            Line2D(
+                [],
+                [],
+                color="grey",
+                linestyle="none",
+                marker=FAILED_MARKER,
+                markerfacecolor="none",
+                markeredgecolor="black",
+                markersize=8,
+                label="run with failures",
+            )
         )
-    )
     if client_limited(series).any():
         handles.append(
             Line2D(
@@ -235,9 +234,19 @@ def figure4(runs: Any, out_dir: Path, stem: str = "fig4") -> Output:
     return Output(paths, _caption(runs, series, recordings))
 
 
+def _failed(rows: Any) -> Any:
+    """Return a boolean series that is true for the runs with a failure."""
+    return rows["failure_rate"] > 0
+
+
 def _caption(runs: Any, series: Any, recordings: list[str]) -> str:
     """Return the caption text of Figure 4 with its request count."""
     requests = count_noun(int(series["requests"].sum()), "request")
+    cross = (
+        " A cross marks a run with a failure rate above 0."
+        if _failed(series).any()
+        else ""
+    )
     return (
         "Figure 4. Median seconds per request at 1 user against the raw "
         "float32 bytes of every channel under the window, for "
@@ -246,8 +255,8 @@ def _caption(runs: Any, series: Any, recordings: list[str]) -> str:
         "point per window. A request returns the minimum and maximum of "
         f"every channel over the window in {COLUMNS:,} pixel columns. "
         "The dotted line is the seconds to move the raw bytes at "
-        f"{format_short(LINK_BYTES_PER_S * 8 / 1e9)} Gbps. A cross marks a "
-        "run with a failure rate above 0. Both methods read from S3. The "
+        f"{format_short(LINK_BYTES_PER_S * 8 / 1e9)} Gbps.{cross} Both "
+        "methods read from S3. The "
         f"runs hold {requests} at 1 user, warm-up requests left out."
         f"{failed_request_sentence(runs, percentiles=False)}"
         f"{client_limited_sentence(series)}"
