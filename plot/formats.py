@@ -57,6 +57,10 @@ LABEL_ROOM = 2.3
 AXIS_ROOM = 0.8
 """Height of the x tick labels and the x label, in inches."""
 
+X_MARGIN = 0.12
+"""Space beyond the first and last x tick of a panel, as a fraction of the
+data range."""
+
 NARROW_DECADES = 2.5
 """A y axis that spans fewer decades than this gets ticks at 1, 2, and 5."""
 
@@ -325,6 +329,7 @@ def _style_axis(axis: Any, panel: Panel, seconds: bool) -> None:
     axis.set_xscale("log")
     axis.set_yscale("log")
     axis.set_xticks(panel.ticks)
+    axis.margins(x=X_MARGIN)
     axis.xaxis.set_major_formatter(
         FuncFormatter(lambda value, _: panel.tick_label(value))
     )

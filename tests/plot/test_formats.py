@@ -438,6 +438,22 @@ def test_the_labels_of_a_row_do_not_overlap(
                     assert not extent.overlaps(other)
 
 
+def test_the_tick_labels_of_neighboring_panels_do_not_touch(
+    two_windows, tmp_path, capture
+):
+    saved = capture(figure2_module)
+    figure2(two_windows, tmp_path)
+    figure = saved[0]
+    figure.canvas.draw()
+    bottom = rows_of(figure, columns=4)[-1]
+    assert len(bottom) == 4
+    for left, right in zip(bottom, bottom[1:], strict=False):
+        last = [t for t in left.get_xticklabels() if t.get_text()][-1]
+        first = [t for t in right.get_xticklabels() if t.get_text()][0]
+        gap = first.get_window_extent().x0 - last.get_window_extent().x1
+        assert gap > 0.18 * figure.dpi
+
+
 def test_the_labels_match_the_colors_of_their_lines(
     format_benchmark, tmp_path, capture
 ):
