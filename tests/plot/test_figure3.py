@@ -236,3 +236,112 @@ def test_figure3_states_no_s3_rate_for_a_client_limited_server_run(
 ):
     changed = mark_client_limited(runs, "server", "R3", 600, 1000)
     assert "S3 served" not in figure3(changed, tmp_path).caption
+
+
+def _dotted(axis, color):
+    return [
+        line
+        for line in axis.get_lines()
+        if line.get_linestyle() == ":" and line.get_color() == color
+    ]
+
+
+def test_figure3_draws_both_rows_on_log_y_axes(runs, tmp_path, capture):
+    saved = capture(module)
+    figure3(runs, tmp_path)
+    assert [axis.get_yscale() for axis in saved[0].axes] == ["log"] * 4
+
+
+def test_figure3_labels_log_ticks_as_plain_numbers(runs, tmp_path, capture):
+    saved = capture(module)
+    figure3(runs, tmp_path)
+    axis = saved[0].axes[2]
+    formatter = axis.yaxis.get_major_formatter()
+    assert [formatter(value) for value in (0.01, 0.1, 1, 10, 1000)] == [
+        "0.01",
+        "0.1",
+        "1",
+        "10",
+        "1,000",
+    ]
+
+
+def test_figure3_draws_the_timeout_in_every_upper_axis(runs, tmp_path, capture):
+    saved = capture(module)
+    figure3(runs, tmp_path)
+    for axis in saved[0].axes[:2]:
+        lines = _dotted(axis, module.GUIDE_COLOR)
+        assert len(lines) == 1
+        assert set(lines[0].get_ydata()) == {FAILED_REQUEST_SECONDS}
+
+
+def test_figure3_writes_the_timeout_text_in_the_first_column_only(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    figure3(runs, tmp_path)
+    texts = [[t.get_text() for t in axis.texts] for axis in saved[0].axes]
+    assert texts == [["timeout"], [], [], []]
+
+
+def test_figure3_draws_the_timeout_at_the_request_timeout_without_a_header(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    runs.attrs.clear()
+    figure3(runs, tmp_path)
+    line = _dotted(saved[0].axes[0], module.GUIDE_COLOR)[0]
+    assert set(line.get_ydata()) == {REQUEST_TIMEOUT_S}
+
+
+def test_figure3_draws_the_reference_rate_from_the_one_user_run(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    figure3(runs, tmp_path)
+    rate_10s = saved[0].axes[2]
+    server = _dotted(rate_10s, module.METHOD_COLORS["server"])
+    assert len(server) == 1
+    assert list(server[0].get_xdata()) == [1, 10, 100, 1000]
+    # The server median at 1 user is window / 100, so 10 s gives 0.1 s.
+    assert list(server[0].get_ydata()) == pytest.approx(
+        [users / 0.1 for users in (1, 10, 100, 1000)]
+    )
+    assert server[0].get_alpha() == 0.5
+
+
+def test_figure3_draws_one_reference_line_per_method_in_the_method_color(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    figure3(runs, tmp_path)
+    for method, color in module.METHOD_COLORS.items():
+        assert len(_dotted(saved[0].axes[3], color)) == 1, method
+
+
+def test_figure3_draws_no_reference_line_without_a_one_user_run(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    changed = runs[~((runs["method"] == "server") & (runs["users"] == 1))]
+    figure3(changed.reset_index(drop=True), tmp_path)
+    assert _dotted(saved[0].axes[2], module.METHOD_COLORS["server"]) == []
+    assert len(_dotted(saved[0].axes[2], module.METHOD_COLORS["precomputed"]))
+
+
+def test_figure3_labels_the_reference_lines_no_queueing_in_the_legend(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    figure3(runs, tmp_path)
+    labels = [text.get_text() for text in saved[0].legends[0].get_texts()]
+    assert labels.count("no queueing") == 1
+
+
+def test_figure3_caption_defines_a_request(runs, tmp_path):
+    caption = figure3(runs, tmp_path).caption
+    assert caption.startswith("Figure 3. A request asks for the minimum and ")
+    assert "reduced to 2,000 pixel columns" in caption
+    assert "returns them as one array" in caption
+    assert "the median seconds of the 1-user run" in caption
+    assert "dotted gray line in the upper panels is the timeout" in caption
