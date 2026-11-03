@@ -85,7 +85,7 @@ R3-1h and R4 per format, including the raw-only bundle, and of R3 in TS-Zarr.
 ## Software
 
 Each format is read and written with its standard library. NWB on HDF5 uses pynwb and
-h5py. NWB on Zarr uses pynwb and hdmf-zarr. TS-Zarr uses timeseries-zarr 0.1.0a11, the
+h5py. NWB on Zarr uses pynwb and hdmf-zarr. TS-Zarr uses timeseries-zarr 0.1.0a12, the
 Python reference reader and writer, for both benchmarks. EDF is the one exception. No EDF
 library reads a window by byte range: pyedflib and MNE take a local path, and edfio and
 edfplus load the whole signal. A small EDF range reader is therefore part of the package.
@@ -101,7 +101,7 @@ One Python 3.12 environment holds every library, because hdmf-zarr 0.14 runs on
 zarr 3.4. It holds zarr, timeseries-zarr, tsdownsample, pynwb, h5py with hdf5plugin,
 hdmf-zarr, fsspec, and s3fs. Every CSV header prints the version of each library. The
 paper's Methods names the reader once, as the Python reference reader (timeseries-zarr
-0.1.0a11), and cites tsdownsample with its version.
+0.1.0a12), and cites tsdownsample with its version.
 
 ## Machines and stores
 

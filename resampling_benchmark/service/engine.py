@@ -335,6 +335,12 @@ class Engine:
                 (e for e in errors if not isinstance(e, BrokenBarrierError)),
                 errors[0],
             )
+        # The executor keeps its initializer arguments, and so the barrier,
+        # alive. Python unlinks the barrier semaphores when the barrier is
+        # collected. A service that a signal ends skips the exit handlers
+        # and would leak them.
+        self.executor._initargs = ()
+        del barrier
         self.pids = tuple(sorted(ready.pid for ready in readies))
         self.bundles_opened = readies[0].bundles_opened
         self._infos = readies[0].infos
