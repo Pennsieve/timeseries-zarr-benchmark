@@ -15,9 +15,6 @@ from matplotlib.typing import LineStyleType
 
 from tszbench.schemas import SUBSET_CHANNELS, SUBSET_KINDS
 
-STORE_COLORS = {"local": "#0072B2", "http": "#E69F00", "s3": "#009E73"}
-"""One color per store in every figure. The Wong colorblind-safe palette."""
-
 METHOD_COLORS = {"server": "#D55E00", "precomputed": "#0072B2"}
 """One color per resampling benchmark method in every figure. The precomputed
 read is a TS-Zarr read and has the TS-Zarr blue."""

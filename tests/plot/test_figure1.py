@@ -1,80 +1,67 @@
+import pandas as pd
 import pytest
 
-from plot import figure1 as module
 from plot.data import NoDataError
-from plot.figure1 import figure1, figure1_rows
+from plot.figure1 import figure1
 from tests.plot.conftest import trim_reads
-from tszbench.schemas import READ_FORMATS
+
+LONG_WINDOW_S = 600
 
 
-def test_rows_hold_only_the_10_s_all_channel_reads(format_benchmark):
-    rows = figure1_rows(format_benchmark)
-    format_rows = rows[rows["format"].isin(READ_FORMATS)]
-    # 2 recordings x 3 stores x 6 formats x 21 reads
-    assert len(format_rows) == 2 * 3 * 6 * 21
-    assert "zarr-direct" not in set(rows["format"])
-
-
-def test_rows_copy_overhead_into_a_recording_without_it(format_benchmark):
-    rows = figure1_rows(format_benchmark)
-    for recording in ("R1-1h", "R3-1h"):
-        overhead = rows[
-            (rows["recording"] == recording) & (rows["format"] == "overhead")
-        ]
-        assert len(overhead) == 3 * 21
-
-
-def test_rows_raise_without_matching_reads(format_benchmark):
-    with pytest.raises(NoDataError):
-        figure1_rows(format_benchmark[format_benchmark["window_s"] == 60])
+@pytest.fixture
+def two_windows(format_benchmark):
+    """Return the reads with a copy of the R3-1h reads at 10 s moved to 10 min."""
+    short = format_benchmark[
+        (format_benchmark["recording"] == "R3-1h")
+        & (format_benchmark["window_s"] == 10)
+    ].copy()
+    short["window_s"] = LONG_WINDOW_S
+    frame = pd.concat([format_benchmark, short], ignore_index=True)
+    frame.attrs = dict(format_benchmark.attrs)
+    return frame
 
 
 def test_figure1_writes_pdf_and_png(format_benchmark, tmp_path):
-    output = figure1(format_benchmark, tmp_path)
-    assert [p.name for p in output.paths] == ["fig1.pdf", "fig1.png"]
+    output = figure1(format_benchmark, tmp_path, "R3-1h", "fig1-test")
+    assert [p.name for p in output.paths] == ["fig1-test.pdf", "fig1-test.png"]
     assert all(p.stat().st_size > 1000 for p in output.paths)
     assert output.paths[0].read_bytes().startswith(b"%PDF")
     assert output.paths[1].read_bytes().startswith(b"\x89PNG")
 
 
-def test_figure1_has_one_panel_per_recording_and_one_row_per_format(
-    format_benchmark, tmp_path, capture
-):
-    saved = capture(module)
-    figure1(format_benchmark, tmp_path)
-    axes = saved[0].axes
-    assert [axis.get_title() for axis in axes] == ["R1-1h", "R3-1h"]
-    by_position = dict(
-        zip(
-            axes[0].get_yticks(),
-            [t.get_text() for t in axes[0].get_yticklabels()],
-            strict=True,
-        )
-    )
-    assert len(by_position) == 7
-    assert by_position[max(by_position)] == "EDF"
-    assert by_position[min(by_position)] == "overhead (1 byte)"
-    assert axes[0].get_xscale() == "log"
-
-
-def test_figure1_caption_counts_reads_per_store(format_benchmark, tmp_path):
-    caption = figure1(format_benchmark, tmp_path).caption
-    assert caption.startswith("Figure 1.")
-    assert (
-        "R3-1h: 147 reads on local disk, 147 reads on HTTP, 147 reads on S3."
-        in caption
-    )
-    assert caption.isascii()
-
-
-def test_figure1_caption_states_the_reads_per_combination_and_the_budget(
+def test_figure1_caption_states_the_statistic_and_the_encodings(
     format_benchmark, tmp_path
 ):
     caption = figure1(format_benchmark, tmp_path).caption
+    assert caption.startswith(
+        "Figure 1. Median seconds per read of R3-1h on S3"
+    )
+    assert "on log axes" in caption
     assert (
-        " Each combination holds 21 reads. A combination stops after the read "
-        "that brings the sum of its read seconds to at least the read budget "
-        "of 1 h, once it has made at least three reads."
+        "The channel panel shows the 10 s window and varies the channels read."
+    ) in caption
+    assert "The window panels show one channel and all channels" in caption
+    assert "A band spans the 25th to 75th percentile of the reads." in caption
+    assert "The dotted line is the median seconds of a 1-byte read" in caption
+    assert caption.isascii()
+
+
+def test_figure1_caption_counts_the_reads_on_s3_only(
+    format_benchmark, tmp_path
+):
+    caption = figure1(format_benchmark, tmp_path).caption
+    # 6 formats x 9 combinations x 21 reads
+    assert "The medians cover 1,134 reads on S3." in caption
+    assert "local disk" not in caption
+    assert "Each combination holds 21 reads." in caption
+
+
+def test_figure1_caption_states_the_read_budget(format_benchmark, tmp_path):
+    caption = figure1(format_benchmark, tmp_path).caption
+    assert (
+        "A combination stops after the read that brings the sum of its read "
+        "seconds to at least the read budget of 1 h, once it has made at "
+        "least three reads."
     ) in caption
 
 
@@ -87,11 +74,42 @@ def test_figure1_caption_leaves_out_the_budget_without_header_keys(
     assert "budget" not in caption
 
 
-def test_figure1_caption_counts_only_the_reads_that_it_draws(
+def test_figure1_caption_omits_the_channel_panels_without_subset_reads(
+    format_benchmark, tmp_path
+):
+    caption = figure1(format_benchmark, tmp_path, "R1-1h").caption
+    assert "channel panels" not in caption
+    assert "of R1-1h" in caption
+
+
+def test_figure1_caption_counts_only_the_reads_on_s3(
     format_benchmark, tmp_path
 ):
     trimmed = trim_reads(format_benchmark, 5)
-    first = trimmed.iloc[0]
-    assert first["window_s"] != 10
+    assert trimmed.iloc[0]["store"] == "local"
     caption = figure1(trimmed, tmp_path).caption
     assert "Each combination holds 21 reads." in caption
+
+
+def test_figure1_raises_for_an_absent_recording(format_benchmark, tmp_path):
+    with pytest.raises(NoDataError):
+        figure1(format_benchmark, tmp_path, "R4")
+
+
+def test_figure1_raises_for_a_recording_without_reads_on_s3(
+    format_benchmark, tmp_path
+):
+    without_s3 = format_benchmark[format_benchmark["store"] != "s3"]
+    with pytest.raises(NoDataError):
+        figure1(without_s3, tmp_path)
+
+
+def test_figure1_caption_says_the_channel_panels_for_two_windows(
+    two_windows, tmp_path
+):
+    caption = figure1(two_windows, tmp_path).caption
+    assert (
+        "The channel panels show the window lengths 10 s and 10 min and vary "
+        "the channels read."
+    ) in caption
+    assert "The channel panel shows" not in caption

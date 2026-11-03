@@ -6,6 +6,8 @@ from plot.__main__ import main
 OUTPUTS = {
     "fig1.pdf",
     "fig1.png",
+    "fig1-R1-1h.pdf",
+    "fig1-R1-1h.png",
     "fig2.pdf",
     "fig2.png",
     "fig2-R1-1h.pdf",
@@ -18,6 +20,8 @@ OUTPUTS = {
     "fig4.png",
     "fig5.pdf",
     "fig5.png",
+    "fig5-R1-1h.pdf",
+    "fig5-R1-1h.png",
     "table1.csv",
     "table1.tex",
     "table2.csv",
@@ -48,11 +52,13 @@ def test_main_captions_lists_figures_before_tables(results_dir, tmp_path):
     ]
     assert labels == [
         "Figure 1",
+        "Figure 1",
         "Figure 2",
         "Figure 2",
         "Figure 3",
         "Figure 3",
         "Figure 4",
+        "Figure 5",
         "Figure 5",
         "Table 1",
         "Table 2",
