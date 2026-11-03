@@ -14,14 +14,16 @@ from resampling_benchmark.summarize import (
     FAILED_REQUEST_SECONDS_KEY,
     deployment_metadata,
     find_runs,
+    measured_span,
     median_charged_seconds,
     summarize,
     summarize_run,
+    sustained_mean,
 )
 from tszbench.csvmeta import CsvWriter, read_header
 from tszbench.recordings import RECORDINGS, RecordingSpec
 from tszbench.schemas import (
-    LINK_LIMITED_FILE,
+    CLIENT_LIMITED_FILE,
     MONITOR,
     NOT_RUN_FILE,
     RESAMPLING_REQUESTS,
@@ -90,19 +92,25 @@ def write_requests(
 
 
 def write_monitor(
-    path: Path, role: str, values: list[tuple[float, float]]
+    path: Path,
+    role: str,
+    values: list[tuple[float, float]],
+    first_time: float = 0.0,
+    memory: float = 10.0,
+    **header: str,
 ) -> None:
-    with CsvWriter(path, MONITOR, {}) as writer:
+    with CsvWriter(path, MONITOR, header) as writer:
         for index, (cpu, rx) in enumerate(values):
             writer.write(
                 {
                     "run": "server-S1-10-2",
                     "host": "h",
                     "role": role,
-                    "time_s": float(index),
+                    "time_s": first_time + index,
                     "cpu_percent": cpu,
                     "rx_bytes_per_s": rx,
                     "tx_bytes_per_s": 0.0,
+                    "memory_percent": memory,
                 }
             )
 
@@ -228,6 +236,25 @@ def test_an_error_after_half_a_second_counts_as_the_timeout(
     assert row["failure_rate"] == pytest.approx(0.5)
 
 
+def test_a_connection_error_that_returns_at_once_counts_as_the_timeout(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "raw" / "server-S1-10-2"
+    write_requests(
+        directory / "requests-0.csv",
+        [
+            request_row(0, seconds=1.0),
+            request_row(1, seconds=0.001, status="error:RemoteProtocolError"),
+            request_row(2, seconds=0.002, status="error:ReadError"),
+        ],
+    )
+    row = summarize_run(find_runs(directory.parent)[0], lookup)
+    seconds = [1.0, REQUEST_TIMEOUT_S, REQUEST_TIMEOUT_S]
+    assert row["failures"] == 2
+    assert row["median_s"] == pytest.approx(REQUEST_TIMEOUT_S)
+    assert row["p95_s"] == pytest.approx(np.percentile(seconds, 95))
+
+
 def test_a_run_without_failures_keeps_the_seconds_of_its_requests(
     tmp_path: Path,
 ) -> None:
@@ -265,7 +292,20 @@ def test_monitor_peaks_come_from_the_monitor_files(
 ) -> None:
     row = summarize_run(find_runs(run_directory)[0], lookup)
     assert row["server_cpu_max"] == pytest.approx(80.0)
-    assert row["generator_link_max"] == pytest.approx(0.5)
+    assert row["server_memory_max"] == pytest.approx(10.0)
+
+
+def test_the_sustained_columns_are_empty_without_a_start_time(
+    run_directory: Path,
+) -> None:
+    row = summarize_run(find_runs(run_directory)[0], lookup)
+    for name in (
+        "server_cpu_sustained",
+        "generator_cpu_sustained",
+        "generator_link_sustained",
+        "generator_cpu_s_per_request",
+    ):
+        assert row[name] == ""
 
 
 def test_monitor_columns_are_empty_without_monitor_files(
@@ -275,7 +315,8 @@ def test_monitor_columns_are_empty_without_monitor_files(
         path.unlink()
     row = summarize_run(find_runs(run_directory)[0], lookup)
     assert row["server_cpu_max"] == ""
-    assert row["generator_link_max"] == ""
+    assert row["server_memory_max"] == ""
+    assert row["generator_link_sustained"] == ""
 
 
 def test_a_repeated_run_is_marked_from_the_request_header(
@@ -338,26 +379,203 @@ def test_both_csvs_record_the_failed_request_seconds_in_the_header(
         assert float(header[FAILED_REQUEST_SECONDS_KEY]) == REQUEST_TIMEOUT_S
 
 
-def test_a_run_is_link_limited_only_when_it_has_the_marker_file(
-    run_directory: Path,
-) -> None:
-    assert (
-        summarize_run(find_runs(run_directory)[0], lookup)["link_limited"]
-        == "false"
-    )
-    (run_directory / "server-S1-10-2" / LINK_LIMITED_FILE).touch()
-    assert (
-        summarize_run(find_runs(run_directory)[0], lookup)["link_limited"]
-        == "true"
-    )
-
-
-def test_a_high_link_peak_alone_does_not_mark_a_run_link_limited(
+def test_a_run_is_client_limited_only_when_it_has_the_marker_file(
     run_directory: Path,
 ) -> None:
     row = summarize_run(find_runs(run_directory)[0], lookup)
-    assert row["generator_link_max"] == pytest.approx(0.5)
-    assert row["link_limited"] == "false"
+    assert (row["client_limited"], row["client_limit"]) == ("false", "")
+    marker = run_directory / "server-S1-10-2" / CLIENT_LIMITED_FILE
+    marker.write_text("cpu\n")
+    row = summarize_run(find_runs(run_directory)[0], lookup)
+    assert (row["client_limited"], row["client_limit"]) == ("true", "cpu")
+    marker.write_text("link\n")
+    row = summarize_run(find_runs(run_directory)[0], lookup)
+    assert (row["client_limited"], row["client_limit"]) == ("true", "link")
+
+
+def test_an_empty_client_limited_file_marks_the_run_without_a_resource(
+    run_directory: Path,
+) -> None:
+    (run_directory / "server-S1-10-2" / CLIENT_LIMITED_FILE).touch()
+    row = summarize_run(find_runs(run_directory)[0], lookup)
+    assert (row["client_limited"], row["client_limit"]) == ("true", "")
+
+
+def test_a_client_limited_file_with_an_unknown_resource_is_rejected(
+    run_directory: Path,
+) -> None:
+    marker = run_directory / "server-S1-10-2" / CLIENT_LIMITED_FILE
+    marker.write_text("memory\n")
+    with pytest.raises(ValueError, match="must be one of"):
+        find_runs(run_directory)
+
+
+@pytest.fixture
+def timed_run(tmp_path: Path) -> Path:
+    """Two generators with a common start at 1000 s and a 10 s measured part.
+
+    Generator 0 sends two measured requests of 5 s. Generator 1 sends two of
+    4 s and 6 s. Every request reads 3 objects and 30 bytes from S3.
+    """
+    directory = tmp_path / "raw" / "server-S1-10-2"
+    first = [
+        request_row(0, warmup=True, seconds=2.0),
+        request_row(1, seconds=5.0, dispatch=0.0),
+        request_row(2, seconds=5.0, dispatch=5.0),
+    ]
+    second = [
+        request_row(0, user=0, generator=1, warmup=True, seconds=2.0),
+        request_row(1, user=0, generator=1, seconds=4.0, dispatch=0.0),
+        request_row(2, user=0, generator=1, seconds=6.0, dispatch=4.0),
+    ]
+    write_requests(directory / "requests-0.csv", first, start_at="1000.0")
+    write_requests(directory / "requests-1.csv", second, start_at="1000.0")
+    link = LINK_BYTES_PER_S
+    write_monitor(
+        directory / "monitor-generator-0.csv",
+        "generator",
+        [(50.0, 0.8 * link)] + [(50.0, 0.0)] * 9,
+        first_time=1001.0,
+        vcpus="32",
+    )
+    write_monitor(
+        directory / "monitor-generator-1.csv",
+        "generator",
+        [(25.0, 0.1 * link)] * 10,
+        first_time=1001.0,
+        vcpus="8",
+    )
+    write_monitor(
+        directory / "monitor-server.csv",
+        "server",
+        [(100.0, 0)] + [(0.0, 0)] * 9,
+        first_time=1001.0,
+        memory=40.0,
+    )
+    return directory.parent
+
+
+def test_the_sustained_columns_cover_the_measured_part_of_the_run(
+    timed_run: Path,
+) -> None:
+    row = summarize_run(find_runs(timed_run)[0], lookup)
+    assert row["server_cpu_max"] == pytest.approx(100.0)
+    assert row["server_cpu_sustained"] == pytest.approx(10.0)
+    assert row["server_memory_max"] == pytest.approx(40.0)
+    assert row["generator_cpu_sustained"] == pytest.approx(0.5)
+    assert row["generator_link_sustained"] == pytest.approx(0.1)
+
+
+def test_generator_cpu_seconds_per_request_is_computed_from_vcpus_and_use(
+    timed_run: Path,
+) -> None:
+    row = summarize_run(find_runs(timed_run)[0], lookup)
+    generator_0 = 0.50 * 32 * 10
+    generator_1 = 0.25 * 8 * 10
+    assert row["generator_cpu_s_per_request"] == pytest.approx(
+        (generator_0 + generator_1) / 4
+    )
+    assert row["generator_cpu_s_per_request"] == pytest.approx(45.0)
+
+
+def test_generator_cpu_seconds_per_request_is_empty_without_the_vcpu_count(
+    timed_run: Path,
+) -> None:
+    write_monitor(
+        timed_run / "server-S1-10-2" / "monitor-generator-1.csv",
+        "generator",
+        [(25.0, 0.0)] * 10,
+        first_time=1001.0,
+    )
+    row = summarize_run(find_runs(timed_run)[0], lookup)
+    assert row["generator_cpu_s_per_request"] == ""
+    assert row["generator_cpu_sustained"] == pytest.approx(0.5)
+
+
+def test_s3_rates_divide_the_measured_requests_by_the_measured_seconds(
+    timed_run: Path,
+) -> None:
+    row = summarize_run(find_runs(timed_run)[0], lookup)
+    assert row["s3_requests_per_second"] == pytest.approx(4 * 3 / 10)
+    assert row["s3_bytes_per_second"] == pytest.approx(4 * 30 / 10)
+
+
+def test_s3_rates_leave_out_warmup_requests_and_need_no_start_time(
+    run_directory: Path,
+) -> None:
+    row = summarize_run(find_runs(run_directory)[0], lookup)
+    assert row["s3_requests_per_second"] == pytest.approx(8 * 3 / 185.5)
+    assert row["s3_bytes_per_second"] == pytest.approx(8 * 30 / 185.5)
+
+
+def test_a_one_second_link_spike_alone_does_not_mark_a_run_client_limited(
+    timed_run: Path,
+) -> None:
+    row = summarize_run(find_runs(timed_run)[0], lookup)
+    assert row["generator_link_sustained"] == pytest.approx(0.1)
+    assert (row["client_limited"], row["client_limit"]) == ("false", "")
+
+
+def test_the_measured_span_runs_from_the_first_measured_dispatch_to_the_last_response(
+    tmp_path: Path,
+) -> None:
+    write_requests(
+        tmp_path / "requests-0.csv",
+        [
+            request_row(0, warmup=True, dispatch=0.0, seconds=9.0),
+            request_row(1, dispatch=4.0, seconds=2.0),
+            request_row(2, dispatch=6.0, seconds=3.0),
+        ],
+        start_at="1000.0",
+    )
+    write_requests(
+        tmp_path / "requests-1.csv",
+        [
+            request_row(0, warmup=True, dispatch=0.0, seconds=1.0),
+            request_row(1, dispatch=3.0, seconds=8.0),
+            request_row(2, dispatch=5.0, seconds=""),
+        ],
+        start_at="1000.0",
+    )
+    paths = [tmp_path / "requests-0.csv", tmp_path / "requests-1.csv"]
+    assert measured_span(paths) == (1003.0, 1011.0)
+
+
+def test_the_measured_span_is_none_without_a_start_time_or_a_measured_request(
+    tmp_path: Path,
+) -> None:
+    write_requests(tmp_path / "undated.csv", [request_row(1)])
+    write_requests(
+        tmp_path / "warmup.csv",
+        [request_row(0, warmup=True)],
+        start_at="1000.0",
+    )
+    assert measured_span([tmp_path / "undated.csv"]) is None
+    assert measured_span([tmp_path / "warmup.csv"]) is None
+
+
+def test_a_sustained_mean_is_the_highest_mean_of_ten_consecutive_samples(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "monitor.csv"
+    values = [(0.0, 0.0)] * 5 + [(100.0, 0.0)] * 6 + [(10.0, 0.0)] * 9
+    write_monitor(path, "generator", values)
+    span = (-1.0, 100.0)
+    assert sustained_mean(path, "cpu_percent", span) == pytest.approx(
+        (6 * 100.0 + 4 * 10.0) / 10
+    )
+    assert sustained_mean(path, "cpu_percent", span, window_s=3) == (
+        pytest.approx(100.0)
+    )
+
+
+def test_a_sustained_mean_over_fewer_samples_than_the_window_is_their_mean(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "monitor.csv"
+    write_monitor(path, "generator", [(10.0, 0.0), (30.0, 0.0)])
+    assert sustained_mean(path, "cpu_percent", (-1.0, 100.0)) == 20.0
+    assert sustained_mean(path, "cpu_percent", (500.0, 600.0)) is None
 
 
 def test_the_header_copies_the_server_metadata_and_the_generator_fields(
@@ -437,7 +655,7 @@ def test_a_not_run_row_has_the_run_identity_and_no_statistics(
     assert row["recording"] == "R3-1h"
     assert row["window_s"] == "600"
     assert row["users"] == 100
-    assert row["link_limited"] == "false"
+    assert row["client_limited"] == "false"
     assert row["repeated"] == "false"
     empty = [
         "requests",

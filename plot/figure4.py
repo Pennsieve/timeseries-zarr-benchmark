@@ -12,18 +12,18 @@ from matplotlib.typing import LineStyleType
 from plot.data import (
     NoDataError,
     Output,
+    client_limited,
+    client_limited_sentence,
     count_noun,
     failed_request_sentence,
     join_words,
-    link_limited,
-    link_limited_sentence,
     recording_order,
     select_runs,
     without_not_run,
 )
 from plot.style import (
+    CLIENT_LIMITED_MARKER,
     FAILED_MARKER,
-    LINK_LIMITED_MARKER,
     METHOD_COLORS,
     METHOD_LABELS,
     RECORDING_MARKERS,
@@ -126,12 +126,12 @@ def figure4(runs: Any, out_dir: Path, stem: str = "fig4") -> Output:
                 markeredgecolor="black",
                 markeredgewidth=0.8,
             )
-            limited = rows[link_limited(rows)]
+            limited = rows[client_limited(rows)]
             axis.plot(
                 limited["raw_bytes"],
                 limited["median_s"],
                 linestyle="none",
-                marker=LINK_LIMITED_MARKER,
+                marker=CLIENT_LIMITED_MARKER,
                 markersize=11,
                 markerfacecolor="none",
                 markeredgecolor="black",
@@ -182,17 +182,17 @@ def figure4(runs: Any, out_dir: Path, stem: str = "fig4") -> Output:
             label="run with failures",
         )
     )
-    if link_limited(series).any():
+    if client_limited(series).any():
         handles.append(
             Line2D(
                 [],
                 [],
                 linestyle="none",
-                marker=LINK_LIMITED_MARKER,
+                marker=CLIENT_LIMITED_MARKER,
                 markersize=11,
                 markerfacecolor="none",
                 markeredgecolor="black",
-                label="generator link limited",
+                label="client limited",
             )
         )
     figure.legend(handles=handles, frameon=False, loc="outside right center")
@@ -218,5 +218,5 @@ def _caption(runs: Any, series: Any, recordings: list[str]) -> str:
         "A cross marks a run with a failure rate above 0. Both methods read "
         f"from S3. The runs hold {parts}, warm-up requests left out."
         f"{failed_request_sentence(runs, percentiles=False)}"
-        f"{link_limited_sentence(series)}"
+        f"{client_limited_sentence(series)}"
     )

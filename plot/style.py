@@ -60,8 +60,8 @@ READ_KIND_LABELS = {
 FAILED_MARKER = "X"
 """Marker of a resampling benchmark run whose failure rate is above 0."""
 
-LINK_LIMITED_MARKER = "o"
-"""Marker of a resampling benchmark run that a load generator link may have limited. It
+CLIENT_LIMITED_MARKER = "o"
+"""Marker of a resampling benchmark run that the load generators may have limited. It
 is drawn as a large open ring around the point of the run."""
 
 RASTER_DPI = 200

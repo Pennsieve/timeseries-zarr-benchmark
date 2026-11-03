@@ -1,6 +1,9 @@
+import contextlib
 import http.server
 import os
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -16,6 +19,7 @@ from resampling_benchmark.load.generator import (
     GeneratorConfig,
     Outcome,
     RequestError,
+    ServerRequester,
     error_detail,
     format_window,
     run_generator,
@@ -281,7 +285,9 @@ def test_users_of_the_server_method_write_rows_against_a_live_server(
     server_url: str, tmp_path: Path
 ) -> None:
     out = tmp_path / "requests-0.csv"
-    settings = config(server_url=server_url, total_users=2)
+    settings = config(
+        server_url=server_url, total_users=2, users_per_generator=100
+    )
     written = run_generator(settings, out)
     rows = read_rows(out)
     assert written == len(rows) == 2 * 4
@@ -304,6 +310,8 @@ def test_users_of_the_server_method_write_rows_against_a_live_server(
     header = read_header(out)
     assert header["run"] == "unit-run"
     assert header["repeated"] == "false"
+    assert float(header["start_at"]) == settings.start_at
+    assert header["method_users_per_generator"] == "100"
 
 
 @pytest.mark.network
@@ -434,6 +442,57 @@ def stalled_server() -> Iterator[str]:
     release.set()
     server.shutdown()
     server.server_close()
+
+
+@contextlib.contextmanager
+def closing_server(reset: bool) -> Iterator[str]:
+    """Serve a port that reads each request and drops the connection unanswered.
+
+    With `reset`, the connection ends with a TCP reset in place of an orderly close.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+
+    def serve() -> None:
+        while True:
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                return
+            connection.recv(65536)
+            if reset:
+                connection.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+                )
+            connection.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{listener.getsockname()[1]}"
+    listener.close()
+
+
+@pytest.mark.network
+@pytest.mark.parametrize(
+    ("reset", "status"),
+    [(False, "error:RemoteProtocolError"), (True, "error:ReadError")],
+)
+def test_a_connection_closed_mid_request_is_recorded_by_its_error_class(
+    reset: bool, status: str
+) -> None:
+    with closing_server(reset) as url:
+        client = httpx.Client(base_url=url, timeout=5.0)
+        rows: list[Mapping[str, object]] = []
+        run_user(
+            config(measured_requests=2),
+            0,
+            ServerRequester(client, TINY_ID),
+            rows.append,
+        )
+        client.close()
+    assert [row["status"] for row in rows] == [status] * 3
+    assert all(float(str(row["seconds"])) < 5.0 for row in rows)
 
 
 @pytest.mark.network

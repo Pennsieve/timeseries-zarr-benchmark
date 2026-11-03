@@ -1,8 +1,9 @@
 """Process pool that reads raw samples from S3 and reduces them to columns.
 
 Every pool process owns one `CountingFileSystem` and one open bundle per
-recording. A process runs one task at a time, so a task's S3 requests and
-bytes are the change in the counts of its process.
+recording. A process runs up to `TASK_THREADS` tasks at once on its own
+threads. Each task's S3 requests and bytes come from the counter of its
+context, not from the totals of the process.
 """
 
 import multiprocessing
@@ -10,7 +11,12 @@ import os
 import threading
 import time
 from collections.abc import Sequence
-from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures import (
+    Future,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    wait,
+)
 from dataclasses import dataclass
 from multiprocessing.synchronize import Barrier as ProcessBarrier
 from threading import BrokenBarrierError
@@ -25,12 +31,20 @@ from resampling_benchmark.service.groups import (
     sample_bounds_us,
 )
 from resampling_benchmark.service.store import open_recording
-from tszbench.fs import CountingFileSystem, StoreRoots, make_filesystem
+from tszbench.fs import (
+    CountingFileSystem,
+    StoreRoots,
+    count_task,
+    make_filesystem,
+)
 from tszbench.minmax import column_minmax
 from tszbench.recordings import sample_range
 
 DEFAULT_PROCESSES = os.cpu_count() or 1
 """Processes of the pool, one per vCPU."""
+
+TASK_THREADS = 1
+"""Tasks a pool process runs at once."""
 
 STARTUP_TIMEOUT_S = 900.0
 """Time every pool process has to open its recordings."""
@@ -76,8 +90,8 @@ class TaskResult:
         values: Array of shape (rows, 2), float32.
         read_seconds: Seconds spent reading from S3 and decoding.
         reduce_seconds: Seconds spent trimming and reducing.
-        requests: Requests sent to S3 by the process during the task.
-        bytes: Payload bytes the process received during the task.
+        requests: Requests the task sent to S3.
+        bytes: Payload bytes the task received from S3.
         pid: Operating system id of the process that ran the task.
     """
 
@@ -150,18 +164,25 @@ class _State:
 _STATE: _State | None = None
 _STARTUP_ERROR: BaseException | None = None
 _BARRIER: ProcessBarrier | None = None
+_THREADS: ThreadPoolExecutor | None = None
 
 
 def _initialize(
-    roots: StoreRoots, recordings: Sequence[str], barrier: ProcessBarrier
+    roots: StoreRoots,
+    recordings: Sequence[str],
+    barrier: ProcessBarrier,
+    task_threads: int,
 ) -> None:
-    """Open every recording in a new pool process.
+    """Open every recording and start the task threads in a new pool process.
 
     A failure waits in `_STARTUP_ERROR` so that `_ready` reports it with its
     own message.
     """
-    global _STATE, _STARTUP_ERROR, _BARRIER
+    global _STATE, _STARTUP_ERROR, _BARRIER, _THREADS
     _BARRIER = barrier
+    _THREADS = ThreadPoolExecutor(
+        max_workers=task_threads, thread_name_prefix="task"
+    )
     try:
         _STATE = _State(roots, recordings)
     except Exception as error:
@@ -196,7 +217,7 @@ def _ready() -> _Ready:
 
 
 def run_task(task: Task) -> TaskResult:
-    """Read and reduce one task. Runs in a pool process."""
+    """Read and reduce one task on the calling thread of a pool process."""
     if _STATE is None:
         raise RuntimeError("pool process was not initialized")
     state = _STATE
@@ -206,11 +227,11 @@ def run_task(task: Task) -> TaskResult:
     lower_us, upper_us = sample_bounds_us(
         group.first, group.stop, handle.info.rate_hz
     )
-    before = state.filesystem.counts()
-    started = time.perf_counter()
-    samples = channel.read(lower_us, upper_us)
-    read_seconds = time.perf_counter() - started
-    spent = state.filesystem.counts() - before
+    with count_task() as counter:
+        started = time.perf_counter()
+        samples = channel.read(lower_us, upper_us)
+        read_seconds = time.perf_counter() - started
+    spent = counter.counts()
     started = time.perf_counter()
     skip = group.first - samples.first
     values = np.asarray(
@@ -235,11 +256,34 @@ def run_task(task: Task) -> TaskResult:
     )
 
 
+def run_batch(tasks: Sequence[Task]) -> list[TaskResult]:
+    """Run the tasks of a batch at once on the task threads of the process.
+
+    Returns:
+        One result per task, in the order of tasks. Returns after every task
+        of the batch has ended.
+
+    Raises:
+        Exception: The first error, in task order, of a task that failed.
+    """
+    if _THREADS is None:
+        raise RuntimeError("pool process was not initialized")
+    futures = [_THREADS.submit(run_task, task) for task in tasks]
+    wait(futures)
+    return [future.result() for future in futures]
+
+
+def split_batches(tasks: Sequence[Task], size: int) -> list[list[Task]]:
+    """Split tasks into consecutive batches of at most size tasks."""
+    return [list(tasks[i : i + size]) for i in range(0, len(tasks), size)]
+
+
 class Engine:
     """Reads and reduces the tasks of requests on one pool of processes.
 
     Attributes:
         processes: Processes in the pool.
+        task_threads: Tasks a process runs at once, and the batch size.
         pids: Operating system ids of the pool processes, in ascending order.
         bundles_opened: Bundles each pool process opened at startup.
         executor: The pool.
@@ -250,16 +294,22 @@ class Engine:
         roots: StoreRoots,
         recordings: Sequence[str],
         processes: int = DEFAULT_PROCESSES,
+        task_threads: int = TASK_THREADS,
     ) -> None:
         """Start the pool and open every recording in every process.
 
         Raises:
-            ValueError: processes is below 1.
+            ValueError: processes or task_threads is below 1.
             Exception: The error that stopped a recording from opening.
         """
         if processes < 1:
             raise ValueError(f"processes is {processes}: must be at least 1")
+        if task_threads < 1:
+            raise ValueError(
+                f"task_threads is {task_threads}: must be at least 1"
+            )
         self.processes = processes
+        self.task_threads = task_threads
         self._recordings = tuple(recordings)
         self._lock = threading.Lock()
         self._in_flight = 0
@@ -269,7 +319,7 @@ class Engine:
             max_workers=processes,
             mp_context=context,
             initializer=_initialize,
-            initargs=(roots, self._recordings, barrier),
+            initargs=(roots, self._recordings, barrier, task_threads),
         )
         futures = [self.executor.submit(_ready) for _ in range(processes)]
         readies: list[_Ready] = []
@@ -331,21 +381,41 @@ class Engine:
         ]
         return WindowPlan(info, tasks, len(groups))
 
-    def submit(self, task: Task) -> "Future[TaskResult]":
-        """Queue a task on the pool and count it until it ends."""
-        with self._lock:
-            self._in_flight += 1
+    def submit(self, tasks: Sequence[Task]) -> "list[Future[list[TaskResult]]]":
+        """Queue tasks on the pool as batches of at most `task_threads` tasks.
+
+        Each batch is one pool call. A task counts as in flight until its
+        batch ends or is canceled.
+
+        Returns:
+            One future per batch, in task order. Each holds one result per
+            task of its batch.
+        """
+        futures: list[Future[list[TaskResult]]] = []
         try:
-            future = self.executor.submit(run_task, task)
+            for batch in split_batches(tasks, self.task_threads):
+                futures.append(self._submit_batch(batch))
         except BaseException:
-            self._finished()
+            for future in futures:
+                future.cancel()
             raise
-        future.add_done_callback(lambda _: self._finished())
+        return futures
+
+    def _submit_batch(self, batch: list[Task]) -> "Future[list[TaskResult]]":
+        size = len(batch)
+        with self._lock:
+            self._in_flight += size
+        try:
+            future = self.executor.submit(run_batch, batch)
+        except BaseException:
+            self._finished(size)
+            raise
+        future.add_done_callback(lambda _: self._finished(size))
         return future
 
-    def _finished(self) -> None:
+    def _finished(self, size: int) -> None:
         with self._lock:
-            self._in_flight -= 1
+            self._in_flight -= size
 
     def close(self) -> None:
         """Stop the pool. Tasks that have not started are canceled."""

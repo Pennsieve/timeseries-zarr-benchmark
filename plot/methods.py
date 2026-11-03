@@ -1,8 +1,8 @@
 """The Methods sentences that quote measured numbers: `methods.txt`.
 
 Each paragraph reads its own CSVs from the results directory: the uploads, the
-timed opens, the read budget, the generation times, the equality check, and
-the CSV headers. A paragraph whose CSV is absent is skipped and reported.
+timed opens, the read budget, the generation times, the equality check, the
+load-test runs, and the CSV headers. A paragraph whose CSV is absent is skipped and reported.
 """
 
 from collections.abc import Callable
@@ -13,19 +13,24 @@ import pandas as pd
 
 from format_benchmark.positions import READ_BUDGET_KEY
 from plot.data import (
+    S3_RATE_USERS,
     NoDataError,
     Output,
     as_bool,
     budget_label,
+    client_limited,
     count_noun,
     format_bytes,
     format_short,
+    format_sig,
     header_number,
     join_words,
     load_csv,
     recording_order,
+    s3_rate_parts,
     select_runs,
     spell_count,
+    without_not_run,
 )
 from plot.style import FORMAT_LABELS, STORE_LABELS
 from tszbench import schemas
@@ -241,6 +246,74 @@ def not_run_paragraph(results: Path) -> str:
     )
 
 
+def _load_run_rows(results: Path) -> Any:
+    """Return the runs of `resampling-runs.csv` that were run, one per cell.
+
+    Raises:
+        NoDataError: The file is absent or holds no rows.
+    """
+    path = results / schemas.RESAMPLING_RUNS_FILE
+    if not path.exists():
+        raise NoDataError(f"{schemas.RESAMPLING_RUNS_FILE} not found")
+    frame = load_csv(path, schemas.RESAMPLING_RUNS)
+    if frame.empty:
+        raise NoDataError(f"no rows in {schemas.RESAMPLING_RUNS_FILE}")
+    return without_not_run(select_runs(frame))
+
+
+def client_cost_paragraph(results: Path) -> str:
+    """Return the median CPU-seconds of the load generators per request.
+
+    The runs are the precomputed R3 runs that are not client limited.
+
+    Raises:
+        NoDataError: `resampling-runs.csv` is absent, or no such run has the
+            column.
+    """
+    frame = _load_run_rows(results)
+    chosen = frame[
+        (frame["method"] == "precomputed")
+        & (frame["recording"] == "R3")
+        & ~client_limited(frame)
+    ]
+    cost = pd.to_numeric(
+        chosen["generator_cpu_s_per_request"], errors="coerce"
+    ).dropna()
+    if cost.empty:
+        raise NoDataError(
+            "no precomputed R3 run that is not client limited has "
+            "generator_cpu_s_per_request"
+        )
+    return (
+        f"One precomputed request costs the load generators a median of "
+        f"{format_sig(float(cost.median()))} CPU-seconds of one vCPU, over "
+        f"{spell_count(len(cost))} runs of R3 that are not client limited."
+    )
+
+
+def s3_rate_paragraph(results: Path) -> str:
+    """Return the S3 request and byte rates of the precomputed 1000-user runs.
+
+    The runs are the client-limited precomputed R3 runs. The paragraph names
+    each window.
+
+    Raises:
+        NoDataError: `resampling-runs.csv` is absent, or no such run has both
+            rates.
+    """
+    frame = _load_run_rows(results)
+    parts = s3_rate_parts(frame[frame["recording"] == "R3"])
+    if not parts:
+        raise NoDataError(
+            f"no client-limited precomputed R3 run of {S3_RATE_USERS:,} users "
+            "has S3 rates"
+        )
+    return (
+        "S3 served the client-limited precomputed runs of R3 at "
+        f"{S3_RATE_USERS:,} users at {join_words(parts)}."
+    )
+
+
 def _header_paths(results: Path) -> list[Path]:
     """Return the result CSVs that exist, in a fixed order."""
     fixed = (
@@ -307,6 +380,8 @@ PARAGRAPHS: tuple[tuple[str, Callable[[Path], str]], ...] = (
     ("generation sentence", generation_paragraph),
     ("equality check sentence", check_paragraph),
     ("not run sentence", not_run_paragraph),
+    ("client cost sentence", client_cost_paragraph),
+    ("S3 rate sentence", s3_rate_paragraph),
     ("versions sentence", versions_paragraph),
 )
 """Name and writer of each paragraph of `methods.txt`, in file order."""

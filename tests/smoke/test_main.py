@@ -11,6 +11,7 @@ from smoke.__main__ import (
     FORMAT_READ_BUDGET_S,
     SmokeError,
     check_format_benchmark_budget,
+    check_resampling_runs,
     environment,
     run_step,
     stop_process_group,
@@ -165,3 +166,53 @@ def test_a_header_with_another_minimum_fails_the_budget_check(
     )
     with pytest.raises(SmokeError, match="min_reads"):
         check_format_benchmark_budget(tmp_path)
+
+
+def write_resampling_results(
+    results: Path, cap: str | None, columns: tuple[str, ...]
+) -> None:
+    header = {"run": "server-T1-10-1", "method": "server"}
+    if cap is not None:
+        header["method_users_per_generator"] = cap
+    directory = results / schemas.RESAMPLING_RAW_DIRECTORY / "server-T1-10-1"
+    with CsvWriter(
+        directory / schemas.requests_file(0),
+        schemas.RESAMPLING_REQUESTS,
+        header,
+    ):
+        pass
+    with CsvWriter(
+        results / schemas.RESAMPLING_RUNS_FILE, columns, {}
+    ) as writer:
+        writer.write(dict.fromkeys(columns, ""))
+
+
+def test_the_resampling_check_accepts_the_cap_of_the_method(
+    tmp_path: Path,
+) -> None:
+    write_resampling_results(tmp_path, "100", schemas.RESAMPLING_RUNS)
+    check_resampling_runs(tmp_path)
+
+
+def test_a_request_csv_without_the_cap_fails_the_resampling_check(
+    tmp_path: Path,
+) -> None:
+    write_resampling_results(tmp_path, None, schemas.RESAMPLING_RUNS)
+    with pytest.raises(SmokeError, match="method_users_per_generator None"):
+        check_resampling_runs(tmp_path)
+
+
+def test_a_request_csv_with_another_cap_fails_the_resampling_check(
+    tmp_path: Path,
+) -> None:
+    write_resampling_results(tmp_path, "12", schemas.RESAMPLING_RUNS)
+    with pytest.raises(SmokeError, match="expected 100"):
+        check_resampling_runs(tmp_path)
+
+
+def test_a_run_csv_with_other_columns_fails_the_resampling_check(
+    tmp_path: Path,
+) -> None:
+    write_resampling_results(tmp_path, "100", schemas.RESAMPLING_RUNS[:-1])
+    with pytest.raises(SmokeError, match="must hold the columns"):
+        check_resampling_runs(tmp_path)

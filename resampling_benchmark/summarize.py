@@ -7,10 +7,10 @@ them. Writes `tszbench.schemas.RESAMPLING_REQUESTS_FILE` and
 
 import argparse
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -18,13 +18,16 @@ import pandas as pd
 from resampling_benchmark.load.generator import (
     LINK_BYTES_PER_S,
     REQUEST_TIMEOUT_S,
+    SATURATION_WINDOW_S,
     STATUS_OK,
 )
+from resampling_benchmark.load.monitor import SAMPLE_INTERVAL_S
 from tszbench.csvmeta import CsvWriter, read_header, run_metadata
 from tszbench.recordings import RecordingSpec, resolve
 from tszbench.schemas import (
+    CLIENT_LIMITED_FILE,
+    CLIENT_LIMITS,
     GENERATOR_MONITOR_PATTERN,
-    LINK_LIMITED_FILE,
     METHODS,
     NOT_RUN_FILE,
     REQUESTS_PATTERN,
@@ -55,8 +58,10 @@ class RunFiles:
         generator_monitors: Monitor CSVs of the load generators.
         server_metadata: JSON file with the run metadata of the server, or
             None when the run has none.
-        link_limited: True when the run directory holds a
-            `tszbench.schemas.LINK_LIMITED_FILE`.
+        client_limited: True when the run directory holds a
+            `tszbench.schemas.CLIENT_LIMITED_FILE`.
+        client_limit: The resource that file names, or an empty string when
+            the file is absent or empty.
         not_run: True for the directory of a run that was skipped. It holds a
             `tszbench.schemas.NOT_RUN_FILE` and no request CSV.
     """
@@ -66,7 +71,8 @@ class RunFiles:
     server_monitors: tuple[Path, ...]
     generator_monitors: tuple[Path, ...]
     server_metadata: Path | None = None
-    link_limited: bool = False
+    client_limited: bool = False
+    client_limit: str = ""
     not_run: bool = False
 
 
@@ -106,10 +112,21 @@ def find_runs(root: Path) -> list[RunFiles]:
                     if (directory / SERVER_METADATA_FILE).is_file()
                     else None
                 ),
-                link_limited=(directory / LINK_LIMITED_FILE).exists(),
+                client_limited=(directory / CLIENT_LIMITED_FILE).exists(),
+                client_limit=_client_limit(directory),
             )
         )
     return runs
+
+
+def _client_limit(directory: Path) -> str:
+    marker = directory / CLIENT_LIMITED_FILE
+    resource = marker.read_text().strip() if marker.exists() else ""
+    if resource and resource not in CLIENT_LIMITS:
+        raise ValueError(
+            f"{marker}: holds {resource!r}, must be one of {CLIENT_LIMITS}"
+        )
+    return resource
 
 
 def read_requests(path: Path) -> Any:
@@ -139,11 +156,18 @@ def charged_seconds(measured: Any) -> Any:
 def measured_requests(requests: Any) -> Any:
     """Return the measured rows of request rows, with numeric columns.
 
-    Warm-up rows are left out. `seconds`, `dispatch_s`, and `bytes` become
-    numbers, and a value that is not a number becomes NaN.
+    Warm-up rows are left out. `seconds`, `dispatch_s`, `bytes`,
+    `s3_requests`, and `s3_bytes` become numbers, and a value that is not a
+    number becomes NaN.
     """
     measured = requests[requests["warmup"] != TRUE].copy()
-    for column in ("seconds", "dispatch_s", "bytes"):
+    for column in (
+        "seconds",
+        "dispatch_s",
+        "bytes",
+        "s3_requests",
+        "s3_bytes",
+    ):
         measured[column] = _numbers(measured, column)
     return measured
 
@@ -170,10 +194,163 @@ def _monitor_peak(paths: Sequence[Path], column: str) -> float | None:
     peak: float | None = None
     for path in paths:
         frame = pd.read_csv(path, comment="#")
-        if len(frame):
+        if len(frame) and column in frame:
             value = float(frame[column].max())
             peak = value if peak is None else max(peak, value)
     return peak
+
+
+def measured_span(paths: Sequence[Path]) -> tuple[float, float] | None:
+    """Return the Unix times that bound the measured part of a run.
+
+    The measured part starts at the first measured dispatch of any generator
+    and ends at the last measured response. Each request CSV gives its
+    dispatch times from the `start_at` of its header.
+
+    Args:
+        paths: Request CSVs of one run.
+
+    Returns:
+        The start and the end, or None when no CSV has a `start_at` and a
+        measured request that was sent.
+    """
+    starts: list[float] = []
+    ends: list[float] = []
+    for path in paths:
+        origin = read_header(path).get("start_at")
+        if origin is None:
+            continue
+        measured = measured_requests(read_requests(path))
+        dispatched = measured["dispatch_s"].dropna()
+        finished = (measured["dispatch_s"] + measured["seconds"]).dropna()
+        if dispatched.empty or finished.empty:
+            continue
+        starts.append(float(origin) + float(dispatched.min()))
+        ends.append(float(origin) + float(finished.max()))
+    if not starts:
+        return None
+    return min(starts), max(ends)
+
+
+def monitor_samples(path: Path, column: str, span: tuple[float, float]) -> Any:
+    """Return the values of a monitor column over the samples of a span.
+
+    A sample at `time_s` covers the `SAMPLE_INTERVAL_S` before it. A sample
+    counts when that interval overlaps the span.
+
+    Args:
+        path: Monitor CSV.
+        column: Column of `tszbench.schemas.MONITOR`.
+        span: Start and end in Unix seconds.
+    """
+    frame = pd.read_csv(path, comment="#")
+    inside = frame[
+        (frame["time_s"] > span[0])
+        & (frame["time_s"] - SAMPLE_INTERVAL_S < span[1])
+    ]
+    return inside[column].to_numpy(dtype=float)
+
+
+def mean_over_span(
+    path: Path, column: str, span: tuple[float, float]
+) -> float | None:
+    """Return the mean of a monitor column over a span, or None without samples."""
+    values = monitor_samples(path, column, span)
+    return float(values.mean()) if values.size else None
+
+
+def sustained_mean(
+    path: Path,
+    column: str,
+    span: tuple[float, float],
+    window_s: int = SATURATION_WINDOW_S,
+) -> float | None:
+    """Return the highest rolling mean of a monitor column over a span.
+
+    The mean covers `window_s` consecutive samples. A span with fewer samples
+    gives the mean of all of them.
+
+    Returns:
+        The value, or None when the span holds no sample.
+    """
+    values = monitor_samples(path, column, span)
+    if values.size == 0:
+        return None
+    if values.size <= window_s:
+        return float(values.mean())
+    sums = np.convolve(values, np.ones(window_s), mode="valid")
+    return float(sums.max() / window_s)
+
+
+class SustainedLoad(NamedTuple):
+    """The highest sustained load of any load generator of a run.
+
+    Attributes:
+        cpu: Sustained CPU use as a fraction of the generator's CPU, 0 to 1.
+        link: Sustained receive rate as a fraction of `LINK_BYTES_PER_S`.
+    """
+
+    cpu: float
+    link: float
+
+
+def sustained_load(
+    request_paths: Iterable[Path], monitor_paths: Iterable[Path]
+) -> SustainedLoad | None:
+    """Return the highest sustained CPU use and receive rate of any generator.
+
+    Each value is the highest `SATURATION_WINDOW_S` rolling mean over the
+    measured part of the run, as `measured_span` bounds it.
+
+    Args:
+        request_paths: Request CSVs of the run.
+        monitor_paths: Monitor CSVs of the load generators. A path that does
+            not exist is skipped.
+
+    Returns:
+        The two fractions, or None when no monitor sample falls inside the
+        measured part.
+    """
+    span = measured_span(list(request_paths))
+    if span is None:
+        return None
+    busiest: list[float] = []
+    fullest: list[float] = []
+    for path in monitor_paths:
+        if not path.exists():
+            continue
+        busy = sustained_mean(path, "cpu_percent", span)
+        received = sustained_mean(path, "rx_bytes_per_s", span)
+        if busy is not None and received is not None:
+            busiest.append(busy / 100.0)
+            fullest.append(received / LINK_BYTES_PER_S)
+    if not busiest:
+        return None
+    return SustainedLoad(cpu=max(busiest), link=max(fullest))
+
+
+def generator_cpu_seconds(
+    monitor_paths: Sequence[Path], span: tuple[float, float]
+) -> float | None:
+    """Return the CPU time that the load generators used over a span.
+
+    The unit is seconds of one vCPU. Each monitor CSV gives the vCPU count of
+    its generator in the `vcpus` header key.
+
+    Returns:
+        The sum over the generators, or None when a monitor has no `vcpus`
+        key or no sample in the span, or when there is no monitor.
+    """
+    if not monitor_paths:
+        return None
+    total = 0.0
+    for path in monitor_paths:
+        vcpus = read_header(path).get("vcpus")
+        busy = mean_over_span(path, "cpu_percent", span)
+        if vcpus is None or busy is None:
+            return None
+        total += busy / 100.0 * int(vcpus) * (span[1] - span[0])
+    return total
 
 
 def not_run_row(run: str) -> dict[str, object]:
@@ -200,7 +377,7 @@ def not_run_row(run: str) -> dict[str, object]:
         "window_s": window_s,
         "users": int(users),
         "repeated": "false",
-        "link_limited": "false",
+        "client_limited": "false",
         "not_run": TRUE,
     }
     return row
@@ -263,15 +440,27 @@ def summarize_run(
         * round(window_s * spec.rate_hz)
         * BYTES_PER_SAMPLE,
         "server_cpu_max": "",
-        "generator_link_max": "",
         "repeated": (
             TRUE
             if read_header(files.requests[0]).get("repeated") == TRUE
             else "false"
         ),
-        "link_limited": TRUE if files.link_limited else "false",
+        "client_limited": TRUE if files.client_limited else "false",
+        "client_limit": files.client_limit,
         "not_run": "false",
     }
+    row |= dict.fromkeys(
+        (
+            "server_cpu_sustained",
+            "server_memory_max",
+            "generator_link_sustained",
+            "generator_cpu_sustained",
+            "generator_cpu_s_per_request",
+            "s3_requests_per_second",
+            "s3_bytes_per_second",
+        ),
+        "",
+    )
     if total:
         seconds = charged_seconds(measured).to_numpy(dtype=float)
         low, middle, high = np.percentile(
@@ -287,10 +476,52 @@ def summarize_run(
     cpu = _monitor_peak(files.server_monitors, "cpu_percent")
     if cpu is not None:
         row["server_cpu_max"] = cpu
-    receive = _monitor_peak(files.generator_monitors, "rx_bytes_per_s")
-    if receive is not None:
-        row["generator_link_max"] = receive / LINK_BYTES_PER_S
+    memory = _monitor_peak(files.server_monitors, "memory_percent")
+    if memory is not None:
+        row["server_memory_max"] = memory
+    seconds = _measured_seconds(measured)
+    if seconds is not None:
+        row["s3_requests_per_second"] = (
+            float(measured["s3_requests"].sum()) / seconds
+        )
+        row["s3_bytes_per_second"] = float(measured["s3_bytes"].sum()) / seconds
+    unix_span = measured_span(files.requests)
+    if unix_span is not None:
+        _add_sustained(row, files, unix_span, total)
     return row
+
+
+def _measured_seconds(measured: Any) -> float | None:
+    """Return the seconds from the first measured dispatch to the last response."""
+    done = (measured["dispatch_s"] + measured["seconds"]).dropna()
+    started = measured["dispatch_s"].dropna()
+    if done.empty or started.empty:
+        return None
+    seconds = float(done.max() - started.min())
+    return seconds if seconds > 0 else None
+
+
+def _add_sustained(
+    row: dict[str, object],
+    files: RunFiles,
+    span: tuple[float, float],
+    measured_total: int,
+) -> None:
+    """Fill the columns that need the Unix time of the measured part."""
+    sustained = [
+        value
+        for path in files.server_monitors
+        if (value := sustained_mean(path, "cpu_percent", span)) is not None
+    ]
+    if sustained:
+        row["server_cpu_sustained"] = max(sustained)
+    load = sustained_load(files.requests, files.generator_monitors)
+    if load is not None:
+        row["generator_cpu_sustained"] = load.cpu
+        row["generator_link_sustained"] = load.link
+    cost = generator_cpu_seconds(files.generator_monitors, span)
+    if cost is not None and measured_total:
+        row["generator_cpu_s_per_request"] = cost / measured_total
 
 
 def deployment_metadata(runs: Sequence[RunFiles]) -> dict[str, str]:

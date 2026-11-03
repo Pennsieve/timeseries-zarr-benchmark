@@ -48,6 +48,14 @@ REQUEST_TIMEOUT_S = 180.0
 LINK_BYTES_PER_S = 12.5e9 / 8
 """Receive rate of a load generator link of 12.5 Gbps, in bytes per second."""
 
+SATURATION_WINDOW_S = 10
+"""Seconds of the rolling mean that measures the sustained CPU use and the
+sustained receive rate of a load generator."""
+
+SATURATION_LIMIT = 0.5
+"""Fraction of its CPU or its link above which a load generator may limit a
+run."""
+
 STATUS_OK = "ok"
 STATUS_TIMEOUT = "timeout"
 MAX_ERROR_DETAIL = 48
@@ -81,6 +89,8 @@ class GeneratorConfig:
         measured_requests: Measured requests of each user.
         time_limit_s: Seconds after `start_at` when new requests stop.
         repeated: True for a run repeated with half the users per generator.
+        users_per_generator: Most users the orchestrator puts on one generator
+            for the method, written to the CSV header. None when unknown.
     """
 
     method: str
@@ -101,6 +111,7 @@ class GeneratorConfig:
     measured_requests: int = MEASURED_REQUESTS
     time_limit_s: float = RUN_TIME_LIMIT_S
     repeated: bool = False
+    users_per_generator: int | None = None
 
     @property
     def window_us(self) -> int:
@@ -450,7 +461,10 @@ def run_generator(config: GeneratorConfig, out: Path) -> int:
         users_on_generator=config.users,
         processes=config.processes,
         repeated="true" if config.repeated else "false",
+        start_at=config.start_at,
     )
+    if config.users_per_generator is not None:
+        header["method_users_per_generator"] = str(config.users_per_generator)
     lock = threading.Lock()
     rows = 0
     with CsvWriter(out, RESAMPLING_REQUESTS, header) as writer:
@@ -557,6 +571,11 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--time-limit-s", type=float, default=RUN_TIME_LIMIT_S)
     parser.add_argument("--repeated", action="store_true")
+    parser.add_argument(
+        "--users-per-generator",
+        type=int,
+        help="most users per generator of the method, for the CSV header",
+    )
     return parser.parse_args(argv)
 
 
@@ -591,6 +610,7 @@ def config_from_arguments(arguments: argparse.Namespace) -> GeneratorConfig:
         measured_requests=arguments.measured_requests,
         time_limit_s=arguments.time_limit_s,
         repeated=arguments.repeated,
+        users_per_generator=arguments.users_per_generator,
     )
     if config.users < 1 or config.processes < 1:
         raise ValueError("users and processes must be at least 1")

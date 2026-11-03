@@ -5,9 +5,10 @@ in its order, copies the results back, and destroys the machines. Each step
 names the host it runs on. Commands on an instance run from
 `~/timeseries-zarr-benchmark`, the clone that the Terraform user data makes.
 
-The run takes about 6.5 h from the first apply to the destroy. Generation,
+The run takes about 8.5 h from the first apply to the destroy. Generation,
 upload, and the pull to the file server take about 1 h. The format benchmark
-takes 2.5 to 3.5 h, and the resampling benchmark about 2 h. Start each long
+takes 2.5 to 3.5 h. The calibration session takes about 2 h, and the resampling
+benchmark about 2 h. Start each long
 step inside `tmux` on the instance so that a dropped SSH connection does not
 stop it. Every stage can run again with the same options and continues where it
 stopped, as the README describes.
@@ -39,15 +40,18 @@ and `repo_url` and `repo_commit` to the pushed commit. The other variables and
 their defaults are in `variables.tf`. Set `bucket_force_destroy = true` if
 `terraform destroy` should delete the bucket with its objects.
 
-The default `load_generator_count` is 20. At 1000 users, 10 generators run 100
-users each. A generator whose receive rate passes half its link may limit the
-run. The orchestrator then repeats the run with half the users per generator,
-which is 20 generators of 50 users, so the repeat also runs at 1000 users. A
-repeat that still passes half the link stays in the results, and
-`resampling-runs.csv` marks it in the `link_limited` column.
+The default `load_generator_count` is 20. A generator runs at most 100 server
+users, or `USERS_PER_GENERATOR["precomputed"]` precomputed users. A generator
+whose sustained CPU or receive rate passes half its capacity may limit the run.
+The orchestrator then repeats the run with half the users per generator. A run
+that stays above the limit, or that has too few generators for a repeat, stays
+in the results. `resampling-runs.csv` marks it in the `client_limited` column
+and names the resource in `client_limit`. The precomputed runs at 1000 users
+need more than 20 generators, so they run on 20 and are marked client limited.
 
 Generation and the format benchmark use no load generator. Create the other
-machines first, and the 20 load generators before the resampling benchmark:
+machines first, then 2 load generators for the calibration session, and the 20
+load generators before the resampling benchmark:
 
 ```bash
 terraform init
@@ -64,14 +68,15 @@ The file server, the client, and the resampling server ignore later changes to
 the image and the user data, so the second apply never replaces them or their
 data volumes. To rebuild one of them on purpose, run `terraform apply
 -replace=aws_instance.client` with its resource name. Pin the image so that the
-load generators of the second apply run the same image as the other machines:
+load generators of a later apply run the same image as the other machines:
 
 ```bash
 echo "ami_id = \"$(terraform output -raw ami_id)\"" >> terraform.tfvars
 ```
 
-Keep `repo_commit` unchanged until the resampling benchmark ends. The load
-generators clone that commit when the second apply creates them.
+Keep `repo_commit` unchanged until the calibration session ends. The load
+generators clone that commit when an apply creates them. The section on the
+calibration results says when to change it.
 
 ## Read the outputs and the hosts file
 
@@ -203,6 +208,104 @@ and `results/format-opens.csv` from every finished part, so a command that runs
 one recording or store keeps the rows of the others. The same command run again
 skips the finished combinations.
 
+## Calibrate the service and the load generators
+
+The calibration session sets two values before the grid. `TASK_THREADS` is the
+number of tasks that each pool process of the service runs at once.
+`USERS_PER_GENERATOR["precomputed"]` is the most precomputed users on one load
+generator. Both sweeps run on R3, which the upload step already put in S3.
+
+On your machine, in `terraform/`, create 2 load generators. The plan must add
+2 `aws_instance.load_generator` and change nothing else:
+
+```bash
+terraform plan -var load_generator_count=2
+terraform apply -var load_generator_count=2
+terraform output -raw hosts_file > hosts.txt
+CLIENT=$(terraform output -json public_ips | jq -r .client)
+scp -i ~/.ssh/tszbench hosts.txt ubuntu@${CLIENT}:hosts.txt
+```
+
+On the client, run the setup check from the section on the outputs again. All 5
+hosts must print `ready`.
+
+### Sweep the task threads
+
+The server method runs R3 at the 10 s and 10 min windows, with 10 and 100 users.
+Each value of `--task-threads` is one pass. Restart the service between values,
+because the option is read at startup. Each pass writes its runs to its own
+directory:
+
+```bash
+for value in 1 4 8 16 32; do
+    ssh $SERVER "pkill -f '[r]esampling_benchmark.service'"
+    ssh $SERVER "cd timeseries-zarr-benchmark && nohup .venv/bin/python -m resampling_benchmark.service \
+        --s3-root $BUCKET --task-threads $value > service.log 2>&1 < /dev/null &"
+    until curl -sf -o /dev/null http://$SERVER:8000/health; do sleep 5; done
+    .venv/bin/python -m resampling_benchmark.load.orchestrate --hosts ~/hosts.txt \
+        --s3-root $BUCKET --methods server --recordings R3 --windows 10,600 \
+        --users 10,100 --out results/calibration-raw/threads-$value
+done
+.venv/bin/python -m resampling_benchmark.calibrate server \
+    --input results/calibration-raw/threads-*
+```
+
+The last command writes `results/calibration-server.csv`, one row per run, with
+`task_threads` from the `server-metadata.json` of the run. Choose the smallest
+value whose `requests_per_second` is within 5% of the best value at 100 users on
+both windows, and whose `server_memory_max` stays below 75% in every run. At the
+chosen value, check three facts:
+
+- The 10 s window at 100 users shows `server_cpu_sustained` above 70, or an
+  `s3_requests_per_second` that no longer rises with `--task-threads`.
+- The 10 min window at 10 users has a `median_s` no higher than the one of
+  `--task-threads 1`.
+- The `server_memory_max` of the 10 min window at 100 users is below 75.
+
+### Sweep the users per generator
+
+The precomputed method runs R3 at the 10 s and 1 h windows with 1, 5, 10, 20,
+and 40 users. All users of a run must sit on one generator, so the hosts file of
+this sweep lists one load generator. Runs above `USERS_PER_GENERATOR["precomputed"]`
+log the shortfall and get the `client-limited` file, which the calibration does
+not read:
+
+```bash
+awk '$1 != "load_generator" || ++n == 1' ~/hosts.txt > ~/hosts-one-generator.txt
+.venv/bin/python -m resampling_benchmark.load.orchestrate \
+    --hosts ~/hosts-one-generator.txt --s3-root $BUCKET --methods precomputed \
+    --recordings R3 --windows 10,3600 --users 1,5,10,20,40 \
+    --out results/calibration-raw/generator
+.venv/bin/python -m resampling_benchmark.calibrate generator \
+    --input results/calibration-raw/generator
+```
+
+The last command writes `results/calibration-generator.csv`, one row per run.
+Choose the most users whose `generator_cpu_sustained` stays below 0.5 and whose
+`median_s` stays within 10% of the 1-user median, at both windows. At twice that
+value, one of the two criteria must fail. If neither fails, the limit lies above
+the twice value, so add larger user counts to the sweep.
+
+### Set the chosen values
+
+Set `TASK_THREADS` in `resampling_benchmark/service/engine.py` and the
+`precomputed` entry of `USERS_PER_GENERATOR` in
+`resampling_benchmark/load/orchestrate.py`. Commit and push both. Then set
+`repo_commit` in `terraform/terraform.tfvars` to the new commit, and check it out
+on the client and on the resampling server with `git fetch && git checkout
+<commit>`. The 20 load generators clone that commit when they are created.
+
+Stop the service and destroy the 2 load generators. On your machine, in
+`terraform/`:
+
+```bash
+ssh $SERVER "pkill -f '[r]esampling_benchmark.service'"
+terraform plan -var load_generator_count=0
+terraform apply -var load_generator_count=0
+```
+
+The plan must destroy 2 `aws_instance.load_generator` and change nothing else.
+
 ## Create the load generators
 
 On your machine, in `terraform/`, create the 20 load generators with the
@@ -224,7 +327,8 @@ reads the new `~/hosts.txt`, and all 23 hosts must print `ready`.
 
 Start the resampling service on the resampling server. It runs one pool process
 per vCPU, and each process opens every recording at startup. One request fans
-out over every process of the pool:
+out over every process of the pool, and each process runs up to `TASK_THREADS`
+tasks at once. The option `--task-threads` replaces that default for one start:
 
 ```bash
 ssh $SERVER "cd timeseries-zarr-benchmark && nohup .venv/bin/python -m resampling_benchmark.service \
@@ -249,6 +353,11 @@ curl -s -o /dev/null --max-time 600 -w '%{http_code} %{time_total} s\n' \
 The output starts with `200`. If the time is 180 s or more, stop here. Every R3
 and R4 run with long windows would time out.
 
+The results of the 2026-11-02 run stay under `results/resampling-raw-2026-11-02/`
+on your machine, and the plots leave them out. Before you copy the new results
+back, move the old directory there with `mv results/resampling-raw
+results/resampling-raw-2026-11-02`. Start the grid without `--skip-done`.
+
 Then run the grid from the client:
 
 ```bash
@@ -265,8 +374,11 @@ window. It writes a `not-run` file in each of their run directories, which names
 the run that failed. It saves the run metadata that `/health` reports to
 `server-metadata.json` there. It copies each run's CSVs to
 `results/resampling-raw/<run>/` and writes a `complete` file there when every
-generator exits with status 0. It writes a `link-limited` file when a run stays
-with a generator receive rate above half the link. Add `--skip-done` when you
+generator exits with status 0. It samples the CPU and the receive rate of each load generator once per second.
+When the highest 10 s mean of either passes half its capacity, it repeats the
+run with half the users per generator. It writes a `client-limited` file, which
+holds `cpu` or `link`, when a run stays above that limit or has fewer generators
+than its users need. Add `--skip-done` when you
 start it again after a stop. It skips the runs that have a `complete` file. It
 decides again which runs are not run, from the runs of fewer users. It never
 deletes a complete run. It moves a partial run that is now not run to
@@ -279,7 +391,9 @@ deletes a complete run. It moves a partial run that is now not run to
 ```
 
 This writes `results/resampling-requests.csv` and
-`results/resampling-runs.csv`. Medians and percentiles count each failed
+`results/resampling-runs.csv`. The runs file also holds the sustained CPU and
+receive rate of the load generators, the client CPU-seconds per request, and the
+S3 requests and bytes per second of each run. Medians and percentiles count each failed
 request as 180 s, or as its own seconds when those are longer. Their headers
 copy the server metadata as `server.<key>` lines. They also hold
 `generator.instance`, `generator.ami`, `first_run_date`, and `last_run_date`

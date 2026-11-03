@@ -35,6 +35,8 @@ SUBSET_KINDS = tuple(f"channels{count}" for count in SUBSET_CHANNELS)
 READ_KINDS = ("one", *SUBSET_KINDS, "all")
 """Values of `read_kind`. `one` reads one channel and `all` reads every channel."""
 METHODS = ("server", "precomputed")
+CLIENT_LIMITS = ("cpu", "link")
+"""Values of the resource that limits a client limited run."""
 
 GENERATION = ("recording", "format", "seconds", "bytes", "objects")
 """One row per file written by `generate`."""
@@ -111,7 +113,8 @@ RESAMPLING_REQUESTS = (
     "read_seconds",
     "reduce_seconds",
 )
-"""One row per request. `dispatch_s` counts from the start of the run. `seconds`
+"""One row per request. `dispatch_s` counts from the start of the run, which the
+header key `start_at` gives in Unix seconds. `seconds`
 runs from dispatch to the decoded array. `bytes` is what the user received.
 `status` is `ok`, `timeout`, or `error:<detail>`. `level` is the level read, 0
 for raw. `read_seconds` and `reduce_seconds` split the time spent reading S3 and
@@ -135,20 +138,42 @@ RESAMPLING_RUNS = (
     "median_bytes",
     "raw_bytes",
     "server_cpu_max",
-    "generator_link_max",
+    "server_cpu_sustained",
+    "server_memory_max",
+    "generator_link_sustained",
+    "generator_cpu_sustained",
+    "generator_cpu_s_per_request",
+    "s3_requests_per_second",
+    "s3_bytes_per_second",
     "repeated",
-    "link_limited",
+    "client_limited",
+    "client_limit",
     "not_run",
 )
 """One row per run, warm-up requests left out. `raw_bytes` is the float32 size
-of every channel under the window. `server_cpu_max` is the peak of the
-per-second CPU use in percent. `generator_link_max` is the peak per-second
-receive rate of any load generator as a fraction of its link. `repeated` is
-true for a run repeated with half the users per generator. `link_limited` is
-true for a run whose peak receive rate passed half the generator link and that
-no repeat replaced. `not_run` is true for a run that the orchestrator skipped
-because a smaller user count of the same method, recording, and window failed.
-Such a row holds the method, recording, window, and users, and no statistics."""
+of every channel under the window. `server_cpu_max` and `server_memory_max` are
+the peaks of the per-second CPU use and memory use of the server, in percent.
+`server_cpu_sustained` is the highest rolling mean of the server CPU use, in
+percent, over the measured part of the run. The measured part runs from the
+first measured dispatch to the last measured response.
+
+`generator_cpu_sustained` and `generator_link_sustained` are the highest
+rolling means over the measured part, for the busiest load generator of each
+resource. The first is a fraction of the generator CPU, the second a fraction
+of its link. `generator_cpu_s_per_request` is the CPU time of the load
+generators per measured request, in seconds of one vCPU.
+`s3_requests_per_second` and `s3_bytes_per_second` count the S3 requests and
+bytes of every measured request over the measured seconds.
+
+`repeated` is true for a run repeated with half the users per generator.
+`client_limited` is true for a run that the load generators may have limited
+and that no repeat replaced. `client_limit` names the resource, `cpu` or
+`link`, and is empty for a run that is not client limited. A run with fewer load
+generators than its users per generator cap asks for is client limited and reads
+`cpu`, even when neither sustained measure passed its limit. `not_run` is true
+for a run that the orchestrator skipped because a smaller user count of the
+same method, recording, and window failed. Such a row holds the method,
+recording, window, and users, and no statistics."""
 
 MONITOR = (
     "run",
@@ -158,8 +183,39 @@ MONITOR = (
     "cpu_percent",
     "rx_bytes_per_s",
     "tx_bytes_per_s",
+    "memory_percent",
 )
-"""One row per host per second during a resampling benchmark run."""
+"""One row per host per second during a resampling benchmark run.
+`memory_percent` is the memory in use as a percent of the host memory."""
+
+CALIBRATION_SERVER = (
+    "task_threads",
+    "run",
+    "recording",
+    "window_s",
+    "users",
+    "requests_per_second",
+    "median_s",
+    "server_cpu_sustained",
+    "server_memory_max",
+    "s3_requests_per_second",
+)
+"""One row per server method run of the `--task-threads` sweep. `task_threads` is
+empty when the run directory has no server metadata. The other columns are the
+`RESAMPLING_RUNS` columns of the same name."""
+
+CALIBRATION_GENERATOR = (
+    "run",
+    "recording",
+    "window_s",
+    "users",
+    "generator_cpu_sustained",
+    "generator_link_sustained",
+    "median_s",
+    "generator_cpu_s_per_request",
+)
+"""One row per precomputed method run of the users per generator sweep. The
+columns are the `RESAMPLING_RUNS` columns of the same name."""
 
 CHECK = (
     "recording",
@@ -217,6 +273,12 @@ RESAMPLING_REQUESTS_FILE = "resampling-requests.csv"
 RESAMPLING_RUNS_FILE = "resampling-runs.csv"
 """Result file of the resampling benchmark, one `RESAMPLING_RUNS` row per run."""
 
+CALIBRATION_SERVER_FILE = "calibration-server.csv"
+"""Result file of the `--task-threads` sweep, `CALIBRATION_SERVER` rows."""
+
+CALIBRATION_GENERATOR_FILE = "calibration-generator.csv"
+"""Result file of the users per generator sweep, `CALIBRATION_GENERATOR` rows."""
+
 CHECK_FILE = "resampling-check.csv"
 """Result file of the equality check, `CHECK` rows."""
 
@@ -244,10 +306,10 @@ COMPLETE_FILE = "complete"
 """Empty file in a run directory, written after every generator of the run
 exits with status 0."""
 
-LINK_LIMITED_FILE = "link-limited"
-"""Empty file inside a run directory, written when the peak receive rate of a
-generator passed half its link and no repeat with fewer users per generator
-could run."""
+CLIENT_LIMITED_FILE = "client-limited"
+"""File inside a run directory, written when the load generators may have
+limited the run and no repeat with fewer users per generator could replace it.
+It holds the limiting resource, `cpu` or `link`."""
 
 NOT_RUN_FILE = "not-run"
 """File inside the directory of a run that the orchestrator skipped. It holds

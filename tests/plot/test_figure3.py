@@ -6,7 +6,7 @@ from plot.figure3 import figure3, figure3_series
 from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
 from tests.plot.conftest import (
     FAILED_REQUEST_SECONDS,
-    mark_link_limited,
+    mark_client_limited,
     mark_not_run,
     ring_points,
 )
@@ -159,13 +159,33 @@ def test_figure3_caption_falls_back_to_the_request_timeout(runs, tmp_path):
     assert "count each failed request as at least 180 s." in caption
 
 
-def test_figure3_rings_a_link_limited_run_on_both_rows(runs, tmp_path, capture):
+def test_figure3_rings_a_client_limited_run_on_both_rows(
+    runs, tmp_path, capture
+):
     saved = capture(module)
-    figure3(mark_link_limited(runs, "precomputed", "R3", 600, 1000), tmp_path)
+    figure3(mark_client_limited(runs, "precomputed", "R3", 600, 1000), tmp_path)
     assert len(ring_points(saved[0].axes)) == 2
 
 
-def test_figure3_draws_no_ring_without_a_link_limited_run(
+def test_figure3_labels_the_ring_client_limited_in_the_legend(
+    runs, tmp_path, capture
+):
+    saved = capture(module)
+    figure3(
+        mark_client_limited(runs, "precomputed", "R3", 600, 1000, "cpu"),
+        tmp_path,
+    )
+    legend = saved[0].legends[0]
+    labels = [text.get_text() for text in legend.get_texts()]
+    assert "client limited" in labels
+    assert not any("link" in label for label in labels)
+    saved.clear()
+    figure3(runs, tmp_path)
+    labels = [text.get_text() for text in saved[0].legends[0].get_texts()]
+    assert "client limited" not in labels
+
+
+def test_figure3_draws_no_ring_without_a_client_limited_run(
     runs, tmp_path, capture
 ):
     saved = capture(module)
@@ -173,8 +193,46 @@ def test_figure3_draws_no_ring_without_a_link_limited_run(
     assert ring_points(saved[0].axes) == []
 
 
-def test_figure3_caption_counts_the_link_limited_runs(runs, tmp_path):
-    changed = mark_link_limited(runs, "precomputed", "R3", 600, 1000)
+def test_figure3_caption_counts_the_client_limited_runs(runs, tmp_path):
+    changed = mark_client_limited(runs, "precomputed", "R3", 600, 1000)
     caption = figure3(changed, tmp_path).caption
-    assert "A ring marks one run in which a load generator" in caption
+    assert "A ring marks one client-limited run, in which" in caption
     assert "ring" not in figure3(runs, tmp_path).caption
+
+
+def test_figure3_caption_states_the_cap_of_users_per_generator(runs, tmp_path):
+    changed = mark_client_limited(runs, "precomputed", "R3", 600, 1000, "cpu")
+    caption = figure3(changed, tmp_path).caption
+    assert (
+        "passed half its capacity, or the run put more users on a load "
+        "generator than the cap of 100 for the server method or 12 for the "
+        "precomputed method, and no repeat with fewer users per generator "
+        "replaced the run."
+    ) in caption
+
+
+def test_figure3_caption_states_the_s3_rates_of_the_client_limited_runs(
+    runs, tmp_path
+):
+    changed = mark_client_limited(runs, "precomputed", "R3", 600, 1000)
+    mask = (
+        (changed["method"] == "precomputed")
+        & (changed["window_s"] == 600)
+        & (changed["users"] == 1000)
+        & (changed["repeated"] == "false")
+    )
+    changed.loc[mask, "s3_requests_per_second"] = 107_000.0
+    changed.loc[mask, "s3_bytes_per_second"] = 3.7e9
+    caption = figure3(changed, tmp_path).caption
+    assert (
+        "S3 served the client-limited precomputed runs of 1,000 users at "
+        "107,000 requests per second and 3.7 GB per second (10 min window)."
+    ) in caption
+    assert "S3 served" not in figure3(runs, tmp_path).caption
+
+
+def test_figure3_states_no_s3_rate_for_a_client_limited_server_run(
+    runs, tmp_path
+):
+    changed = mark_client_limited(runs, "server", "R3", 600, 1000)
+    assert "S3 served" not in figure3(changed, tmp_path).caption

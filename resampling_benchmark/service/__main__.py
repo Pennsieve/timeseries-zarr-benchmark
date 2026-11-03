@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import resource
 from collections.abc import Sequence
 
 import uvicorn
@@ -11,11 +12,32 @@ from resampling_benchmark.service.app import (
     ENV_RECORDINGS,
     ENV_S3_ENDPOINT_URL,
     ENV_S3_ROOT,
+    ENV_TASK_THREADS,
 )
-from resampling_benchmark.service.engine import DEFAULT_PROCESSES
+from resampling_benchmark.service.engine import DEFAULT_PROCESSES, TASK_THREADS
 from tszbench.recordings import RECORDINGS
 
 DEFAULT_PORT = 8000
+
+OPEN_FILES_MINIMUM = 16384
+"""Open files the service process may hold. Each connected user holds one."""
+
+
+def raise_open_file_limit(minimum: int = OPEN_FILES_MINIMUM) -> int:
+    """Raise the soft open file limit to `minimum`, or to the hard limit if lower.
+
+    The pool processes inherit the new limit. A default soft limit of 1024 makes
+    the server close the connections of the users beyond it.
+
+    Returns:
+        The soft limit after the call.
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    wanted = minimum if hard == resource.RLIM_INFINITY else min(minimum, hard)
+    if soft == resource.RLIM_INFINITY or soft >= wanted:
+        return soft
+    resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
+    return wanted
 
 
 def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -37,6 +59,12 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=int(os.environ.get(ENV_PROCESSES) or DEFAULT_PROCESSES),
         help="pool processes that read and reduce, one per vCPU by default",
+    )
+    parser.add_argument(
+        "--task-threads",
+        type=int,
+        default=int(os.environ.get(ENV_TASK_THREADS) or TASK_THREADS),
+        help="tasks each pool process runs at once",
     )
     parser.add_argument(
         "--s3-root",
@@ -64,6 +92,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         os.environ[ENV_S3_ENDPOINT_URL] = arguments.s3_endpoint_url
     os.environ[ENV_RECORDINGS] = arguments.recordings
     os.environ[ENV_PROCESSES] = str(arguments.processes)
+    os.environ[ENV_TASK_THREADS] = str(arguments.task_threads)
+    raise_open_file_limit()
     uvicorn.run(
         "resampling_benchmark.service.app:create_app",
         factory=True,

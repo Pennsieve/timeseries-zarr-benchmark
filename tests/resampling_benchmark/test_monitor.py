@@ -20,6 +20,13 @@ NET = """Inter-|   Receive                                                |  Tra
 """
 
 
+MEMINFO = """MemTotal:       65536000 kB
+MemFree:         1000000 kB
+MemAvailable:   49152000 kB
+Buffers:          100000 kB
+"""
+
+
 @pytest.fixture
 def proc(tmp_path: Path) -> tuple[Path, Path]:
     stat = tmp_path / "stat"
@@ -27,6 +34,13 @@ def proc(tmp_path: Path) -> tuple[Path, Path]:
     stat.write_text(STAT)
     net.write_text(NET)
     return stat, net
+
+
+@pytest.fixture
+def meminfo(tmp_path: Path) -> Path:
+    path = tmp_path / "meminfo"
+    path.write_text(MEMINFO)
+    return path
 
 
 def test_cpu_ticks_sum_the_first_eight_fields_and_count_idle_and_iowait(
@@ -45,6 +59,21 @@ def test_network_bytes_leave_out_the_loopback_interface(
 
 def test_counters_read_both_files(proc: tuple[Path, Path]) -> None:
     assert read_counters(*proc) == Reading(1010, 840, 1500, 500)
+
+
+def test_memory_percent_is_total_minus_available_over_total(
+    meminfo: Path,
+) -> None:
+    assert monitor.read_memory_percent(meminfo) == pytest.approx(25.0)
+
+
+def test_a_meminfo_file_without_an_available_line_is_rejected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "meminfo"
+    path.write_text("MemTotal: 100 kB\nMemFree: 50 kB\n")
+    with pytest.raises(ValueError, match="no MemTotal and MemAvailable"):
+        monitor.read_memory_percent(path)
 
 
 def test_a_stat_file_without_a_cpu_line_is_rejected(tmp_path: Path) -> None:
@@ -75,7 +104,7 @@ def test_rates_reject_a_non_positive_interval() -> None:
 
 
 def test_the_loop_writes_one_row_per_sample(
-    proc: tuple[Path, Path], tmp_path: Path
+    proc: tuple[Path, Path], meminfo: Path, tmp_path: Path
 ) -> None:
     stat, net = proc
     times = iter([100.0, 101.0, 102.0, 103.0])
@@ -89,6 +118,7 @@ def test_the_loop_writes_one_row_per_sample(
             interval=0.0,
             stat=stat,
             net=net,
+            meminfo=meminfo,
             host="h",
             clock=lambda: next(times),
             max_samples=3,
@@ -102,24 +132,33 @@ def test_the_loop_writes_one_row_per_sample(
     assert lines[0].split(",") == list(MONITOR)
     assert len(lines) == 4
     assert lines[1].split(",")[:4] == ["r", "h", "server", "101.0"]
+    assert float(lines[1].split(",")[MONITOR.index("memory_percent")]) == (
+        pytest.approx(25.0)
+    )
 
 
 def test_the_loop_stops_when_the_event_is_set(
-    proc: tuple[Path, Path], tmp_path: Path
+    proc: tuple[Path, Path], meminfo: Path, tmp_path: Path
 ) -> None:
     stop = threading.Event()
     stop.set()
     with CsvWriter(tmp_path / "m.csv", MONITOR, {}) as writer:
         assert (
             monitor.monitor(
-                writer, "r", "generator", stop, stat=proc[0], net=proc[1]
+                writer,
+                "r",
+                "generator",
+                stop,
+                stat=proc[0],
+                net=proc[1],
+                meminfo=meminfo,
             )
             == 0
         )
 
 
 def test_the_loop_sees_a_change_between_two_samples(
-    proc: tuple[Path, Path], tmp_path: Path
+    proc: tuple[Path, Path], meminfo: Path, tmp_path: Path
 ) -> None:
     stat, net = proc
     clock = iter([0.0, 1.0])
@@ -142,6 +181,7 @@ def test_the_loop_sees_a_change_between_two_samples(
             stop,
             stat=stat,
             net=net,
+            meminfo=meminfo,
             host="h",
             clock=lambda: next(clock),
             max_samples=1,

@@ -5,12 +5,14 @@ thing that changes between rows.
 """
 
 import asyncio
+import contextvars
 import functools
 import threading
 import warnings
 import weakref
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,6 +47,53 @@ class Counts:
     def __sub__(self, other: "Counts") -> "Counts":
         """Return the counts accrued since other was taken."""
         return Counts(self.requests - other.requests, self.bytes - other.bytes)
+
+
+class TaskCounter:
+    """Counts of the requests made on behalf of one task.
+
+    `count_task` makes one. Every `CountingFileSystem` request issued from the
+    context that holds it is added here as well as to the totals of the
+    filesystem. Counts are safe to read from any thread.
+    """
+
+    def __init__(self) -> None:
+        """Start at zero."""
+        self._lock = threading.Lock()
+        self._requests = 0
+        self._bytes = 0
+
+    def counts(self) -> Counts:
+        """Return the counts accrued so far."""
+        with self._lock:
+            return Counts(self._requests, self._bytes)
+
+    def _add(self, requests: int, payload_bytes: int) -> None:
+        with self._lock:
+            self._requests += requests
+            self._bytes += payload_bytes
+
+
+_current_counter: contextvars.ContextVar[TaskCounter | None] = (
+    contextvars.ContextVar("tszbench_task_counter", default=None)
+)
+
+
+@contextmanager
+def count_task() -> Iterator[TaskCounter]:
+    """Count the requests that the current context makes, in a fresh counter.
+
+    The counter follows the context into coroutines, into tasks, and across
+    `asyncio.run_coroutine_threadsafe` and `loop.call_soon_threadsafe`. A plain
+    `threading.Thread` starts with an empty context and needs its own call.
+    The previous counter, if any, is restored on exit.
+    """
+    counter = TaskCounter()
+    token = _current_counter.set(counter)
+    try:
+        yield counter
+    finally:
+        _current_counter.reset(token)
 
 
 def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -111,7 +160,8 @@ class CountingFileSystem(AsyncFileSystem):  # type: ignore[misc]
     are counted and capped the same way as zarr.
 
     Counts are safe to read from any thread. A metadata call or a read made
-    before `counts()` is taken is included in it.
+    before `counts()` is taken is included in it. A request made inside
+    `count_task` is also added to that task's counter.
 
     Every request runs on one private event loop that owns the inner
     filesystem, its HTTP session, and the cap. A coroutine awaited on any
@@ -195,6 +245,9 @@ class CountingFileSystem(AsyncFileSystem):  # type: ignore[misc]
         with self._lock:
             self._requests += requests
             self._bytes += payload_bytes
+        counter = _current_counter.get()
+        if counter is not None:
+            counter._add(requests, payload_bytes)
 
     async def _on_worker_loop[T](self, make: Callable[[], Awaitable[T]]) -> T:
         try:

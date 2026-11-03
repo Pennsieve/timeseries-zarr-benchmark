@@ -28,6 +28,7 @@ from format_benchmark.positions import (
     READ_BUDGET_KEY,
     SUBSET_WINDOWS_S,
 )
+from resampling_benchmark.load.orchestrate import USERS_PER_GENERATOR
 from tszbench import schemas
 from tszbench.csvmeta import read_header, read_rows
 from tszbench.rangeserver import free_port, serve_directory
@@ -283,6 +284,38 @@ def check_format_benchmark_budget(results: Path) -> None:
         )
 
 
+def check_resampling_runs(results: Path) -> None:
+    """Check the resampling benchmark CSVs against the schema and the user caps.
+
+    Every request CSV of the raw directory records the users per generator of
+    its method in the `method_users_per_generator` header key. The run CSV has
+    one column per entry of `schemas.RESAMPLING_RUNS`.
+
+    Raises:
+        SmokeError: A request CSV records another cap, or the run CSV has other
+            columns.
+    """
+    raw = results / schemas.RESAMPLING_RAW_DIRECTORY
+    paths = sorted(raw.glob(f"*/{schemas.REQUESTS_PATTERN}"))
+    if not paths:
+        raise SmokeError(f"resampling_benchmark: no request CSV under {raw}")
+    for path in paths:
+        header = read_header(path)
+        expected = USERS_PER_GENERATOR[header["method"]]
+        recorded = header.get("method_users_per_generator")
+        if recorded != str(expected):
+            raise SmokeError(
+                f"resampling_benchmark: {path.name} of {header['run']} records "
+                f"method_users_per_generator {recorded}, expected {expected}"
+            )
+    runs = read_rows(results / schemas.RESAMPLING_RUNS_FILE)
+    if not runs or list(runs[0]) != list(schemas.RESAMPLING_RUNS):
+        raise SmokeError(
+            f"resampling_benchmark: {schemas.RESAMPLING_RUNS_FILE} must hold "
+            f"the columns {list(schemas.RESAMPLING_RUNS)}"
+        )
+
+
 def check_subset_reads(results: Path) -> None:
     """Check that the format benchmark measured the subset reads of the plot recording.
 
@@ -437,6 +470,7 @@ def run(out: Path) -> None:
         ),
         env,
     )  # fmt: skip
+    check_resampling_runs(results)
     run_step(
         "plot",
         python_module(

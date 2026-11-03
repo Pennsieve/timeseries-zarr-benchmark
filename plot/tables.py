@@ -10,11 +10,12 @@ import pandas as pd
 from plot.data import (
     NoDataError,
     Output,
+    client_limit_condition,
+    client_limited,
     count_noun,
     format_bytes,
     format_short,
     format_sig,
-    link_limited,
     not_run,
     reads_sentence,
     recording_order,
@@ -34,9 +35,9 @@ FAIL = "fail"
 FAIL_PRECOMPUTED = "fail (precomputed)"
 """Cell of Table 3 where only the precomputed run had failures."""
 
-LINK_MARK = " (link)"
-"""Suffix of a cell of Table 3 where a run may have been limited by the link of
-its load generators."""
+CLIENT_MARK = " (client)"
+"""Suffix of a cell of Table 3 where the load generators may have limited a
+run."""
 
 RAW_PLUS_MINMAX = "raw+minmax"
 """Member row that sums `raw` and `minmax`."""
@@ -323,9 +324,10 @@ def table3(runs: Any, recording: str = "R3") -> Table:
     run. A cell reads `not run` when either run was not run. This takes
     precedence over a failure in the other run. Otherwise a cell reads `fail`
     when the server run has a failure rate above 0, and `fail (precomputed)`
-    when only the precomputed run does. A cell is empty when a method has no run at that window and user count. A cell of the
-    LaTeX table ends with `LINK_MARK` when either run is link limited, and the
-    frame holds a boolean column `users_<count>_link` for the same fact.
+    when only the precomputed run does. A cell is empty when a method has no
+    run at that window and user count. A cell of the LaTeX table ends with
+    `CLIENT_MARK` when either run is client limited, and the frame holds a
+    boolean column `users_<count>_client` for the same fact.
 
     Args:
         runs: Data frame of `resampling-runs.csv`.
@@ -363,8 +365,8 @@ def table3(runs: Any, recording: str = "R3") -> Table:
                 row_marks.append(False)
                 continue
             row_marks.append(
-                bool(link_limited(server).iloc[0])
-                or bool(link_limited(precomputed).iloc[0])
+                bool(client_limited(server).iloc[0])
+                or bool(client_limited(precomputed).iloc[0])
             )
             used += int(
                 server["requests"].iloc[0] + precomputed["requests"].iloc[0]
@@ -386,7 +388,7 @@ def table3(runs: Any, recording: str = "R3") -> Table:
     frame = pd.DataFrame(values, columns=names, dtype=object)
     frame.insert(0, "window_s", windows)
     for position, name in enumerate(names):
-        frame[f"{name}_link"] = [row[position] for row in marks]
+        frame[f"{name}_client"] = [row[position] for row in marks]
     rows = tuple(
         (
             window_label(window),
@@ -398,7 +400,7 @@ def table3(runs: Any, recording: str = "R3") -> Table:
                     if math.isnan(cell)
                     else format_sig(cell, 2)
                 )
-                + (LINK_MARK if marked else "")
+                + (CLIENT_MARK if marked else "")
                 for cell, marked in zip(
                     values[index], marks[index], strict=True
                 )
@@ -426,9 +428,9 @@ def table3(runs: Any, recording: str = "R3") -> Table:
                 else ""
             )
             + (
-                f" A cell ends with{LINK_MARK} where a load generator "
-                "received more than half of its link in a run and no repeat "
-                "with fewer users per generator replaced the run."
+                f" A cell ends with{CLIENT_MARK} where, in a run, "
+                f"{client_limit_condition()}, and no repeat with fewer users "
+                "per generator replaced the run."
                 if any(any(row) for row in marks)
                 else ""
             )
