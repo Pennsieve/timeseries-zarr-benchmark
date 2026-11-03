@@ -4,6 +4,7 @@ from plot.data import (
     as_bool,
     budget_label,
     count_noun,
+    failed_request_seconds,
     failed_request_sentence,
     format_bytes,
     format_sig,
@@ -15,6 +16,7 @@ from plot.data import (
     spell_count,
     window_label,
 )
+from resampling_benchmark.load.generator import REQUEST_TIMEOUT_S
 from tests.plot.conftest import FAILED_REQUEST_SECONDS, trim_reads
 from tszbench.schemas import FORMAT_OPENS, RESAMPLING_RUNS
 
@@ -85,6 +87,15 @@ def test_reads_sentence_leaves_out_the_budget_without_its_key(format_benchmark):
     assert (
         reads_sentence(format_benchmark) == " Each combination holds 21 reads."
     )
+
+
+def test_failed_request_seconds_prefers_the_header(runs):
+    assert failed_request_seconds(runs) == FAILED_REQUEST_SECONDS
+
+
+def test_failed_request_seconds_falls_back_to_the_request_timeout(runs):
+    runs.attrs.clear()
+    assert failed_request_seconds(runs) == REQUEST_TIMEOUT_S
 
 
 def test_failed_request_sentence_prefers_the_header(runs):

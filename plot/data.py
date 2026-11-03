@@ -174,6 +174,21 @@ def reads_sentence(rows: Any, header: dict[str, str] | None = None) -> str:
     return text + "."
 
 
+def failed_request_seconds(runs: Any) -> float:
+    """Return the seconds that a failed request counts as at least.
+
+    The number is `FAILED_REQUEST_SECONDS_KEY` in the header of
+    `resampling-runs.csv`, or `REQUEST_TIMEOUT_S` when the header lacks it.
+
+    Args:
+        runs: Data frame of `resampling-runs.csv`.
+    """
+    seconds = header_number(
+        runs.attrs.get("header", {}), FAILED_REQUEST_SECONDS_KEY
+    )
+    return REQUEST_TIMEOUT_S if seconds is None else seconds
+
+
 def failed_request_sentence(runs: Any, *, percentiles: bool) -> str:
     """Return the caption sentence on the seconds of a failed request.
 
@@ -186,11 +201,7 @@ def failed_request_sentence(runs: Any, *, percentiles: bool) -> str:
         runs: Data frame of `resampling-runs.csv`.
         percentiles: Whether the output also shows percentiles.
     """
-    seconds = header_number(
-        runs.attrs.get("header", {}), FAILED_REQUEST_SECONDS_KEY
-    )
-    if seconds is None:
-        seconds = REQUEST_TIMEOUT_S
+    seconds = failed_request_seconds(runs)
     subject = "medians and percentiles" if percentiles else "medians"
     return (
         f" The {subject} count each failed request as at least "
