@@ -19,13 +19,9 @@ from resampling_benchmark.load.orchestrate import USERS_PER_GENERATOR
 from resampling_benchmark.summarize import FAILED_REQUEST_SECONDS_KEY
 from tszbench.csvmeta import read_header
 from tszbench.recordings import RECORDINGS
-from tszbench.schemas import READ_FORMATS
 
 OVERHEAD = "overhead"
 """Value of `format` for the reads of the 1-byte object."""
-
-PLOTTED_FORMATS = (*READ_FORMATS, OVERHEAD)
-"""Rows of Figures 1 and 2. `zarr-direct` is left out."""
 
 TEXT_COLUMNS = frozenset(
     {
@@ -174,6 +170,21 @@ def reads_sentence(rows: Any, header: dict[str, str] | None = None) -> str:
     return text + "."
 
 
+def failed_request_seconds(runs: Any) -> float:
+    """Return the seconds that a failed request counts as at least.
+
+    The number is `FAILED_REQUEST_SECONDS_KEY` in the header of
+    `resampling-runs.csv`, or `REQUEST_TIMEOUT_S` when the header lacks it.
+
+    Args:
+        runs: Data frame of `resampling-runs.csv`.
+    """
+    seconds = header_number(
+        runs.attrs.get("header", {}), FAILED_REQUEST_SECONDS_KEY
+    )
+    return REQUEST_TIMEOUT_S if seconds is None else seconds
+
+
 def failed_request_sentence(runs: Any, *, percentiles: bool) -> str:
     """Return the caption sentence on the seconds of a failed request.
 
@@ -186,11 +197,7 @@ def failed_request_sentence(runs: Any, *, percentiles: bool) -> str:
         runs: Data frame of `resampling-runs.csv`.
         percentiles: Whether the output also shows percentiles.
     """
-    seconds = header_number(
-        runs.attrs.get("header", {}), FAILED_REQUEST_SECONDS_KEY
-    )
-    if seconds is None:
-        seconds = REQUEST_TIMEOUT_S
+    seconds = failed_request_seconds(runs)
     subject = "medians and percentiles" if percentiles else "medians"
     return (
         f" The {subject} count each failed request as at least "
