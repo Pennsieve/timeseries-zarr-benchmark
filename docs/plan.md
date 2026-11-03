@@ -21,8 +21,9 @@ counts and one sentence on upload speed. The text quotes no numbers. It says "si
 "at least an order of magnitude faster". The code and the data generator are archived on
 Zenodo under BSD-2.
 
-The format benchmark is that design with time windows in place of chunks. Figure 1 here is
-their Figure 1. The storage table replaces their chunk-count figure, and the upload
+The format benchmark is that design with time windows in place of chunks. Figure 1 here
+carries the result as their Figure 1 does, as median lines in place of rainclouds. The
+storage table replaces their chunk-count figure, and the upload
 sentence is repeated for these formats. The resampling benchmark has no OME counterpart.
 
 ## Recordings
@@ -180,8 +181,8 @@ keep 320 requests in flight, because zarr allows 10 per read. The reader receive
 wrapped filesystem as a prebuilt `FsspecStore`. One supplementary row reads the TS-Zarr
 raw arrays with zarr-python 3 and no reader, to show how much time the reader adds.
 
-EDF transfers 2 bytes per sample and the float32 formats 4, before compression. Figure 2
-shows median bytes per read below median seconds per read.
+EDF transfers 2 bytes per sample and the float32 formats 4, before compression. Figure 5
+shows the median bytes per read.
 
 ## Resampling benchmark: on-demand resampling against precomputed levels
 
@@ -286,31 +287,36 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
 
 ## Figures and tables
 
-- Figure 1. Seconds per read at the 10 s all-channel window: a raincloud plot on a log
-  axis. One row per format plus Overhead, one color per store, one panel per recording.
-  The direct counterpart of OME Figure 1.
-- Figure 2. Median seconds per read (upper rows) and median bytes per read (lower rows)
-  against window length, log-log, one line per format, one panel per store and read
-  kind, for R3-1h. A dotted line marks the median Overhead read of each store. The other
-  recordings go to the supplement.
-- Figure 3. The resampling benchmark on R3. One small plot per window. The x axis is the
-  number of simultaneous users. The y axis is seconds per request, median with a p5 to p95
-  band. One line for the server and one for the precomputed read. A cross at the median
-  marks a run with failures, and an open ring marks a client-limited run. The precomputed
-  1000-user point carries the ring, and the caption states the S3 requests and bytes per
-  second of those runs. A user count that was not run has no point. A second row shows
-  requests per second. R4 goes to the supplement.
-- Figure 4. All four recordings on one plot. The x axis is raw bytes under the window. The
-  y axis is median seconds per request. One line per method, drawn at 1 user and at 100
-  users, with the failure cross and the client-limited ring of Figure 3. R1 and R2 have the
-  1-user line only. This figure shows
+The three format figures share one layout. Each panel has a log y axis and one line per
+format, and each line carries a direct label at the right edge in place of a legend. The
+Zarr formats are blue, EDF is black, and NWB HDF5 is vermillion. Time chunks are solid and
+channel chunks are dashed. The panels of a recording are, from the left, one panel per
+subset window (10 s and 10 min) against the channels read (1, 4, 16, 64, and every
+channel), then the one-channel reads and the all-channel reads against window length. A
+recording without subset reads has the two window panels only. The other recordings go
+to the supplement as `fig1-<id>`, `fig2-<id>`, and `fig5-<id>`.
+
+- Figure 1. Median seconds per read of R3-1h on S3, with a band from the 25th to the 75th
+  percentile of the reads and a dotted line at the median Overhead read.
+- Figure 2. Figure 1 with one row per store: local disk, HTTP, and S3. Each row shares
+  its y axis.
+- Figure 3. The resampling benchmark on R3. One column per window. The x axis is the
+  number of simultaneous users. The upper row is seconds per request, median with a p5 to
+  p95 band, with a dotted line at the timeout. One line for the server and one for the
+  precomputed read. A cross at the median marks a run with failures, and an open ring
+  marks a client-limited run. The precomputed 1000-user point carries the ring, and the
+  caption states the S3 requests and bytes per second of those runs. A user count that
+  was not run has no point. The lower row is requests per second on a log axis. A dotted
+  line per method gives the requests per second if every request took the median of the
+  1-user run, so the gap to it shows saturation. The caption defines a request as one
+  window of every channel reduced to 2000 columns. R4 goes to the supplement.
+- Figure 4. All four recordings on one plot at 1 user. The x axis is raw bytes under the
+  window. The y axis is median seconds per request. One line per method and recording,
+  one point per window, with the failure cross and the client-limited ring of Figure 3.
+  A dotted line gives the seconds to move the raw bytes at 12.5 Gbps. This figure shows
   how each method's time depends on the raw bytes under the window.
-- Figure 5. Median seconds per read and median bytes per read against the number of
-  channels read (1, 4, 16, 64, and every channel of the recording), log-log, one line per
-  format, one column per store, for R3-1h. Each window, 10 s and 10 min, has a row of
-  seconds above a row of bytes. A dotted line marks the median Overhead read of each store.
-  The other recordings with subset reads go to the supplement. The figure shows how the
-  time of each format grows with the channels read, and how that changes with the window.
+- Figure 5. Median bytes that S3 served per read, in the panels of Figure 1. Bytes do not
+  depend on the store.
 - Table 1. The recordings table above.
 - Table 2. Storage: bytes at rest, object count, and multiplier per recording and format.
   The raw-only TS-Zarr row is the raw-only comparison with EDF and NWB.
