@@ -45,7 +45,7 @@ PREFIX = "data"
 REGION = "us-east-1"
 
 SUBSET_WINDOW_S = SUBSET_WINDOWS_S[0]
-"""Window of the subset reads of the format benchmark."""
+"""Subset window that the smoke run measures. The smoke windows stop at 1 min."""
 
 FORMAT_WINDOWS_S = (1, 10, 60)
 """Windows of the format benchmark. Figure 1 needs 10 s."""

@@ -174,8 +174,8 @@ def test_every_row_of_the_plan_is_known_to_skip_reason() -> None:
         skip_reason(RECORDINGS["R1"], file_format, "one", 1)
 
 
-def test_subset_reads_are_measured_at_ten_seconds_only() -> None:
-    assert SUBSET_WINDOWS_S == (10,)
+def test_subset_reads_are_measured_at_ten_seconds_and_ten_minutes() -> None:
+    assert SUBSET_WINDOWS_S == (10, 600)
 
 
 def test_subset_kinds_read_four_sixteen_and_sixty_four_channels() -> None:
@@ -255,11 +255,12 @@ def test_read_bytes_counts_the_channels_of_the_read_kind() -> None:
 
 
 def test_subset_reads_are_skipped_outside_the_subset_windows() -> None:
-    for window in (1, 60, 600):
+    for window in (1, 60):
         reason = skip_reason(RECORDINGS["R3"], "tszarr", "channels4", window)
         assert reason is not None
-        assert "only at windows of 10 s" in reason
+        assert "only at windows of 10 s, 600 s" in reason
     assert skip_reason(RECORDINGS["R3"], "tszarr", "channels4", 10) is None
+    assert skip_reason(RECORDINGS["R3"], "tszarr", "channels4", 600) is None
 
 
 def test_subset_reads_are_skipped_when_the_block_is_not_narrower() -> None:

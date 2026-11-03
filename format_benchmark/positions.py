@@ -39,7 +39,7 @@ budget applies."""
 MAX_READ_BYTES = 8_000_000_000
 """A single read of float32 samples above this size is not measured."""
 
-SUBSET_WINDOWS_S = (10,)
+SUBSET_WINDOWS_S = (10, 600)
 """Windows at which the subset read kinds are measured."""
 
 FLOAT32_BYTES = 4
@@ -200,8 +200,8 @@ def skip_reason(
         return "the overhead row reads one object"
     if size is not None:
         if window_s not in SUBSET_WINDOWS_S:
-            windows = ", ".join(str(window) for window in SUBSET_WINDOWS_S)
-            return f"subset reads are measured only at windows of {windows} s"
+            windows = ", ".join(f"{window} s" for window in SUBSET_WINDOWS_S)
+            return f"subset reads are measured only at windows of {windows}"
         if size >= spec.channels:
             return (
                 f"a block of {size} channels does not fit recording "

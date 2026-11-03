@@ -201,9 +201,11 @@ Run the grid:
 The defaults run R1-1h, R2-1h, R3-1h, and R4 on every store, format, read
 kind, and window. The read kinds are `one`, `channels4`, `channels16`,
 `channels64`, and `all`. The three `channels` kinds read a block of that many
-channels at the 10 s window, and a recording with no more channels than the
-block skips them. Each combination writes its part under
-`results/format-parts/`. The merge at the end writes `results/format-reads.csv`
+channels at the 10 s and 10 min windows, and a recording with no more channels
+than the block skips them. The R4 blocks at 10 min are the slowest
+combinations of the grid. NWB HDF5 with channel chunks reads the 64 channels of
+`channels64` from S3 one after the other, so one such read takes several hours.
+Each combination writes its part under `results/format-parts/`. The merge at the end writes `results/format-reads.csv`
 and `results/format-opens.csv` from every finished part, so a command that runs
 one recording or store keeps the rows of the others. The same command run again
 skips the finished combinations.

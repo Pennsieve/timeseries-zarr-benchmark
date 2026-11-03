@@ -282,7 +282,9 @@ def test_complete_parts_leaves_out_a_part_that_stopped_under_other_options(
     assert complete_parts(tmp_path, None, BUDGET_S * 2, MIN_READS) == [whole]
 
 
-def test_plan_measures_the_subset_kinds_at_ten_seconds_where_they_fit() -> None:
+def test_plan_measures_the_subset_kinds_at_the_subset_windows_where_they_fit() -> (
+    None
+):
     measured, skipped = plan(
         ["R1", "R2", "R3"],
         ["local"],
@@ -296,18 +298,22 @@ def test_plan_measures_the_subset_kinds_at_ten_seconds_where_they_fit() -> None:
         if c.read_kind in schemas.SUBSET_KINDS
     }
     assert subset == {
-        ("R2", "channels4", 10),
-        ("R2", "channels16", 10),
-        ("R3", "channels4", 10),
-        ("R3", "channels16", 10),
-        ("R3", "channels64", 10),
+        (recording, kind, window)
+        for window in (10, 600)
+        for recording, kind in (
+            ("R2", "channels4"),
+            ("R2", "channels16"),
+            ("R3", "channels4"),
+            ("R3", "channels16"),
+            ("R3", "channels64"),
+        )
     }
     reasons = {
         (c.recording, c.read_kind, c.window_s): reason for c, reason in skipped
     }
     assert "does not fit recording R1" in reasons[("R1", "channels4", 10)]
     assert "which has 32" in reasons[("R2", "channels64", 10)]
-    assert "only at windows of 10 s" in reasons[("R3", "channels4", 60)]
+    assert "only at windows of 10 s, 600 s" in reasons[("R3", "channels4", 60)]
 
 
 def test_plan_skips_every_subset_read_of_the_overhead_row() -> None:

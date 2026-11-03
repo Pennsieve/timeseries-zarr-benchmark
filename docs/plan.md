@@ -132,7 +132,8 @@ options of the run.
 A read returns the raw samples of a window that starts at a random position. Two kinds of
 read are timed at every window: one channel, and every channel. Window lengths are 1 s,
 10 s, 1 min, and 10 min. A read of a contiguous block of 4, 16, or 64 channels is also
-timed at the 10 s window, where the recording has more channels than the block. The block
+timed at the 10 s and 10 min windows, where the recording has more channels than the
+block. The block
 starts at a seeded channel, so every format reads the same channels. The same seeded
 positions serve every format and store, so each format reads the same windows. The benchmark reads R1-1h, R2-1h,
 R3-1h, and R4. The time of a read depends on the window and the chunk layout. The length
@@ -304,12 +305,12 @@ are the us-east-1 list prices in `plot/prices.json`, checked again on the run da
   users, with the failure cross and the client-limited ring of Figure 3. R1 and R2 have the
   1-user line only. This figure shows
   how each method's time depends on the raw bytes under the window.
-- Figure 5. Median seconds per read (upper row) and median bytes per read (lower row) at
-  the 10 s window against the number of channels read (1, 4, 16, 64, and every channel of
-  the recording), log-log, one line per format, one panel per store, for R3-1h. A dotted
-  line marks the median Overhead read of each store. The other recordings with subset
-  reads go to the supplement. The figure shows how the time of each format grows with the
-  channels read.
+- Figure 5. Median seconds per read and median bytes per read against the number of
+  channels read (1, 4, 16, 64, and every channel of the recording), log-log, one line per
+  format, one column per store, for R3-1h. Each window, 10 s and 10 min, has a row of
+  seconds above a row of bytes. A dotted line marks the median Overhead read of each store.
+  The other recordings with subset reads go to the supplement. The figure shows how the
+  time of each format grows with the channels read, and how that changes with the window.
 - Table 1. The recordings table above.
 - Table 2. Storage: bytes at rest, object count, and multiplier per recording and format.
   The raw-only TS-Zarr row is the raw-only comparison with EDF and NWB.
