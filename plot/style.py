@@ -16,8 +16,9 @@ from tszbench.schemas import SUBSET_CHANNELS, SUBSET_KINDS
 STORE_COLORS = {"local": "#0072B2", "http": "#E69F00", "s3": "#009E73"}
 """One color per store in every figure. The Wong colorblind-safe palette."""
 
-METHOD_COLORS = {"server": "#D55E00", "precomputed": "#CC79A7"}
-"""One color per the resampling benchmark method in every figure."""
+METHOD_COLORS = {"server": "#D55E00", "precomputed": "#0072B2"}
+"""One color per resampling benchmark method in every figure. The precomputed
+read is a TS-Zarr read and has the TS-Zarr blue."""
 
 STORE_LABELS = {"local": "local disk", "http": "HTTP", "s3": "S3"}
 METHOD_LABELS = {"server": "server", "precomputed": "precomputed"}
@@ -34,15 +35,23 @@ FORMAT_LABELS = {
 }
 
 FORMAT_LINES: dict[str, tuple[str, LineStyleType, str]] = {
-    "edf": ("#332288", "-", "o"),
-    "nwb-hdf5-time": ("#882255", "-", "s"),
-    "nwb-hdf5-channel": ("#882255", "--", "D"),
-    "nwb-zarr-time": ("#AA9A33", "-", "^"),
-    "nwb-zarr-channel": ("#AA9A33", "--", "v"),
-    "tszarr": ("#117733", "-", "P"),
-    "overhead": ("#555555", ":", "x"),
+    "edf": ("#000000", "-", "o"),
+    "nwb-hdf5-time": ("#D55E00", "-", "s"),
+    "nwb-hdf5-channel": ("#D55E00", "--", "D"),
+    "nwb-zarr-time": ("#56B4E9", "-", "^"),
+    "nwb-zarr-channel": ("#56B4E9", "--", "v"),
+    "tszarr": ("#0072B2", "-", "P"),
+    "overhead": ("#777777", ":", "x"),
 }
-"""Color, line style, and marker of each format line in Figure 2."""
+"""Color, line style, and marker of each format line. The Zarr formats are
+blue, EDF is black, and NWB HDF5 is vermillion, from the Wong palette. Time
+chunks are solid and channel chunks are dashed."""
+
+LINE_WIDTH = 1.2
+"""Width of a data line, in points."""
+
+TSZARR_LINE_WIDTH = 2.0
+"""Width of the TS-Zarr line, in points."""
 
 RECORDING_MARKERS = ("o", "s", "^", "D", "v", "P", "X", "*")
 """Markers of the recordings in Figure 4, in recording order."""
