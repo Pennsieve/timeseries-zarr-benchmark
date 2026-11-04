@@ -37,8 +37,9 @@ Four synthetic recordings, each generated from one committed seed.
 | R3 | intracranial EEG | 200 | 2000 Hz | 24 h | 172,800,000 | 138 GB | 8 |
 | R4 | Neuropixels-like | 384 | 30 kHz | 10 min | 18,000,000 | 28 GB | 7 |
 
-R3 is the worked example of the manuscript. Level counts follow the 1024-bin threshold of
-the specification.
+R3 is the worked example of the manuscript. Level counts follow the default of the
+reference writer, which stops before a level would hold fewer than 1024 bins. The
+specification sets no number of levels.
 
 Each channel is Gaussian noise with a 1/f spectrum and a bump at 8 to 12 Hz, from a child
 seed of the master seed. R4 carries a bump at 300 to 3000 Hz instead. RMS amplitude is
@@ -96,7 +97,7 @@ reduce to pixel columns with `MinMaxDownsampler` from tsdownsample 0.1.5.1. The
 resampling server is FastAPI under one uvicorn worker. Each request fans out over a
 process pool with one process per vCPU. Each pool process holds its own counting
 filesystem and its own open bundles, and runs up to `TASK_THREADS` tasks at once on
-threads. A calibration sweep over `--task-threads` on the resampling server fixes the value.
+threads. A calibration run over `--task-threads` values on the resampling server fixes the value.
 
 One Python 3.12 environment holds every library, because hdmf-zarr 0.14 runs on
 zarr 3.4. It holds zarr, timeseries-zarr, tsdownsample, pynwb, h5py with hdf5plugin,
@@ -232,7 +233,7 @@ are recorded and shown.
 Users are simulated in closed loop. Each user sends a request, waits for the full
 response, decodes it, and sends the next one at a new random start. A load generator runs
 at most 100 server users, or the calibrated number of precomputed users
-(`USERS_PER_GENERATOR`). The calibration sweep picks the most precomputed users whose
+(`USERS_PER_GENERATOR`). The calibration picks the most precomputed users whose
 sustained CPU stays below half the generator's CPU and whose median stays within 10% of
 the 1-user median. Each user sends one warm-up request, which is dropped, and 10 measured
 requests. Users stop sending 5 min after the start of a run. A request that exceeds 180 s

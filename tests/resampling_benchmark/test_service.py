@@ -90,11 +90,11 @@ def test_health_lists_the_open_recordings(client: TestClient) -> None:
     assert body == {
         "recordings": [TINY_ID],
         "processes": 2,
-        "task_threads": 1,
+        "task_threads": TASK_THREADS,
         "in_flight": 0,
     }
     assert metadata["processes"] == "2"
-    assert metadata["task_threads"] == "1"
+    assert metadata["task_threads"] == str(TASK_THREADS)
     assert {"date", "instance", "ami", "version.fastapi"} <= set(metadata)
 
 
@@ -322,10 +322,17 @@ def test_the_uvicorn_server_answers_like_the_application(
     )
 
 
+@pytest.fixture(scope="module")
+def one_thread_client(tiny_settings: Settings) -> Iterator[TestClient]:
+    settings = replace(tiny_settings, task_threads=1)
+    with TestClient(create_app(settings)) as test_client:
+        yield test_client
+
+
 def test_one_request_of_sixteen_tasks_runs_in_both_pool_processes(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    one_thread_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    engine: Engine = client.app.state.engine  # type: ignore[attr-defined]
+    engine = engine_of(one_thread_client)
     monkeypatch.setattr(
         engine_module,
         "plan_groups",

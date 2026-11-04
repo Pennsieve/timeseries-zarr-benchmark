@@ -198,24 +198,24 @@ Run the grid:
     --drop-caches "ssh $FILE_SERVER sudo /usr/local/sbin/drop-caches"
 ```
 
-The defaults run R1-1h, R2-1h, R3-1h, and R4 on every store, format, read
-kind, and window. The read kinds are `one`, `channels4`, `channels16`,
-`channels64`, and `all`. The three `channels` kinds read a block of that many
-channels at the 10 s and 10 min windows, and a recording with no more channels
-than the block skips them. The R4 blocks at 10 min are the slowest
-combinations of the grid. NWB HDF5 with channel chunks reads the 64 channels of
-`channels64` from S3 one after the other, so one such read takes several hours.
-Each combination writes its part under `results/format-parts/`. The merge at the end writes `results/format-reads.csv`
-and `results/format-opens.csv` from every finished part, so a command that runs
-one recording or store keeps the rows of the others. The same command run again
-skips the finished combinations.
+The defaults run R1-1h, R2-1h, R3-1h, and R4 on every store, format, read kind,
+and window. The read kinds are `one`, `channels4`, `channels16`, `channels64`,
+and `all`. The three `channels` kinds read a block of that many channels at the
+10 s and 10 min windows, and a recording with no more channels than the block
+skips them. The R4 blocks at 10 min are the slowest combinations of the grid.
+NWB HDF5 with channel chunks reads the 64 channels of `channels64` from S3 one
+after the other, so one such read takes several hours. Each combination writes
+its part under `results/format-parts/`. The merge at the end writes
+`results/format-reads.csv` and `results/format-opens.csv` from every finished
+part, so a command that runs one recording or store keeps the rows of the
+others. The same command run again skips the finished combinations.
 
 ## Calibrate the service and the load generators
 
 The calibration session sets two values before the grid. `TASK_THREADS` is the
 number of tasks that each pool process of the service runs at once.
 `USERS_PER_GENERATOR["precomputed"]` is the most precomputed users on one load
-generator. Both sweeps run on R3, which the upload step already put in S3.
+generator. Both calibration runs use R3, which the upload step already put in S3.
 
 On your machine, in `terraform/`, create 2 load generators. The plan must add
 2 `aws_instance.load_generator` and change nothing else:
@@ -231,7 +231,7 @@ scp -i ~/.ssh/tszbench hosts.txt ubuntu@${CLIENT}:hosts.txt
 On the client, run the setup check from the section on the outputs again. All 5
 hosts must print `ready`.
 
-### Sweep the task threads
+### Calibrate the task threads
 
 The server method runs R3 at the 10 s and 10 min windows, with 10 and 100 users.
 Each value of `--task-threads` is one pass. Restart the service between values,
@@ -264,11 +264,11 @@ chosen value, check three facts:
   `--task-threads 1`.
 - The `server_memory_max` of the 10 min window at 100 users is below 75.
 
-### Sweep the users per generator
+### Calibrate the users per generator
 
 The precomputed method runs R3 at the 10 s and 1 h windows with 1, 5, 10, 20,
 and 40 users. All users of a run must sit on one generator, so the hosts file of
-this sweep lists one load generator. Runs above `USERS_PER_GENERATOR["precomputed"]`
+this calibration lists one load generator. Runs above `USERS_PER_GENERATOR["precomputed"]`
 log the shortfall and get the `client-limited` file, which the calibration does
 not read:
 
@@ -286,7 +286,7 @@ The last command writes `results/calibration-generator.csv`, one row per run.
 Choose the most users whose `generator_cpu_sustained` stays below 0.5 and whose
 `median_s` stays within 10% of the 1-user median, at both windows. At twice that
 value, one of the two criteria must fail. If neither fails, the limit lies above
-the twice value, so add larger user counts to the sweep.
+the twice value, so add larger user counts.
 
 ### Set the chosen values
 

@@ -183,7 +183,7 @@ def test_a_run_is_named_by_method_recording_window_and_users() -> None:
 
 
 def test_users_per_generator_depends_on_the_method() -> None:
-    assert USERS_PER_GENERATOR == {"server": 100, "precomputed": 12}
+    assert USERS_PER_GENERATOR == {"server": 100, "precomputed": 5}
 
 
 def test_about_one_hundred_server_users_share_a_generator() -> None:
@@ -194,12 +194,13 @@ def test_about_one_hundred_server_users_share_a_generator() -> None:
     assert split_generators(1000, 4, "server") == (4, 250)
 
 
-def test_about_twelve_precomputed_users_share_a_generator() -> None:
+def test_about_five_precomputed_users_share_a_generator() -> None:
     assert split_generators(1, 20, "precomputed") == (1, 1)
-    assert split_generators(10, 20, "precomputed") == (1, 10)
-    assert split_generators(100, 20, "precomputed") == (9, 12)
+    assert split_generators(5, 20, "precomputed") == (1, 5)
+    assert split_generators(10, 20, "precomputed") == (2, 5)
+    assert split_generators(100, 20, "precomputed") == (20, 5)
     assert split_generators(1000, 20, "precomputed") == (20, 50)
-    assert split_generators(1000, 100, "precomputed") == (84, 12)
+    assert split_generators(1000, 300, "precomputed") == (200, 5)
 
 
 def test_users_are_dealt_to_generators_in_turn() -> None:
@@ -576,7 +577,7 @@ def test_a_precomputed_run_passes_its_own_cap_to_every_generator(
         argv[argv.index("--users-per-generator") + 1]
         for argv in runner.generator_launches()
     }
-    assert caps == {"12"}
+    assert caps == {"5"}
 
 
 def test_a_run_below_the_limits_is_not_repeated(tmp_path: Path) -> None:
@@ -768,7 +769,7 @@ def test_the_precomputed_1000_user_run_on_20_generators_is_client_limited(
     ):
         (result,) = execute_spec(spec, settings(tmp_path, 20), FakeRunner())
     assert (result.generators, result.users_per_generator) == (20, 50)
-    assert "needs 84 generators, hosts file holds 20" in caplog.text
+    assert "needs 200 generators, hosts file holds 20" in caplog.text
     assert (result.directory / CLIENT_LIMITED_FILE).read_text() == "cpu\n"
 
 

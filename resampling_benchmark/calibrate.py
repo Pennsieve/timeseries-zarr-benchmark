@@ -106,7 +106,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the command line."""
     parser = argparse.ArgumentParser(
         prog="python -m resampling_benchmark.calibrate",
-        description="Write the calibration CSV of a sweep of resampling runs.",
+        description="Write the calibration CSV of a set of resampling runs.",
     )
     parser.add_argument(
         "kind",
@@ -122,7 +122,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         nargs="+",
         default=[Path("results") / RESAMPLING_RAW_DIRECTORY],
         help=(
-            "orchestrator output roots, one per sweep value or all in one "
+            "orchestrator output roots, one per value or all in one "
             f"(default results/{RESAMPLING_RAW_DIRECTORY})"
         ),
     )

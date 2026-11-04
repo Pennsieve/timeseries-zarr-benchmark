@@ -207,7 +207,7 @@ def test_figure4_caption_counts_the_client_limited_runs(runs, tmp_path):
     assert "A ring marks one client-limited run" in caption
     assert (
         "or the run put more users on a load generator than the cap of 100 "
-        "for the server method or 12 for the precomputed method"
+        "for the server method or 5 for the precomputed method"
     ) in caption
     assert "S3 served" not in caption
 

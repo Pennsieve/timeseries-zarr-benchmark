@@ -43,7 +43,7 @@ from tszbench.recordings import sample_range
 DEFAULT_PROCESSES = os.cpu_count() or 1
 """Processes of the pool, one per vCPU."""
 
-TASK_THREADS = 1
+TASK_THREADS = 32
 """Tasks a pool process runs at once."""
 
 STARTUP_TIMEOUT_S = 900.0

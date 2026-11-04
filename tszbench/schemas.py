@@ -200,7 +200,7 @@ CALIBRATION_SERVER = (
     "server_memory_max",
     "s3_requests_per_second",
 )
-"""One row per server method run of the `--task-threads` sweep. `task_threads` is
+"""One row per server method run of the `--task-threads` calibration. `task_threads` is
 empty when the run directory has no server metadata. The other columns are the
 `RESAMPLING_RUNS` columns of the same name."""
 
@@ -214,7 +214,7 @@ CALIBRATION_GENERATOR = (
     "median_s",
     "generator_cpu_s_per_request",
 )
-"""One row per precomputed method run of the users per generator sweep. The
+"""One row per precomputed method run of the users per generator calibration. The
 columns are the `RESAMPLING_RUNS` columns of the same name."""
 
 CHECK = (
@@ -274,10 +274,10 @@ RESAMPLING_RUNS_FILE = "resampling-runs.csv"
 """Result file of the resampling benchmark, one `RESAMPLING_RUNS` row per run."""
 
 CALIBRATION_SERVER_FILE = "calibration-server.csv"
-"""Result file of the `--task-threads` sweep, `CALIBRATION_SERVER` rows."""
+"""Result file of the `--task-threads` calibration, `CALIBRATION_SERVER` rows."""
 
 CALIBRATION_GENERATOR_FILE = "calibration-generator.csv"
-"""Result file of the users per generator sweep, `CALIBRATION_GENERATOR` rows."""
+"""Result file of the users per generator calibration, `CALIBRATION_GENERATOR` rows."""
 
 CHECK_FILE = "resampling-check.csv"
 """Result file of the equality check, `CHECK` rows."""

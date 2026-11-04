@@ -205,7 +205,7 @@ def test_figure3_caption_states_the_cap_of_users_per_generator(runs, tmp_path):
     caption = figure3(changed, tmp_path).caption
     assert (
         "passed half its capacity, or the run put more users on a load "
-        "generator than the cap of 100 for the server method or 12 for the "
+        "generator than the cap of 100 for the server method or 5 for the "
         "precomputed method, and no repeat with fewer users per generator "
         "replaced the run."
     ) in caption

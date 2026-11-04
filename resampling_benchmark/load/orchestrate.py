@@ -52,7 +52,7 @@ from tszbench.schemas import (
 
 LOGGER = logging.getLogger("resampling_benchmark.orchestrate")
 
-USERS_PER_GENERATOR = {"server": 100, "precomputed": 12}
+USERS_PER_GENERATOR = {"server": 100, "precomputed": 5}
 """Most users on one load generator, by method. A server user costs the
 generator almost no CPU. A precomputed user decodes and reduces on the
 generator, so its cap is lower."""
